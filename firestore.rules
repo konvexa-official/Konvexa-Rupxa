@@ -1,0 +1,63 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // User profiles: authenticated users can read for group search; owners manage their own
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    // Personal Expenses: strictly private to the authenticated owner
+    match /expenses/{expenseId} {
+      allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.user_id == request.auth.uid && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.user_id == request.auth.uid;
+    }
+
+    // Split Groups: accessible to authenticated users participating in shared finances
+    match /split_groups/{groupId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.created_by == request.auth.uid;
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.created_by == request.auth.uid;
+
+      match /members/{memberId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      match /activities/{activityId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if false;
+      }
+    }
+
+    // Test connection document for initial health checks
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

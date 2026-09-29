@@ -1,0 +1,126 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile containing identity and contact details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "full_name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "avatar_url": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "full_name", "email"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Individual personal expense tracking entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "expense_date": { "type": "string" },
+        "payment_method": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "user_id", "amount", "category", "description", "expense_date", "payment_method"]
+    },
+    "SplitGroup": {
+      "title": "SplitGroup",
+      "description": "Shared expense splitting group",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "created_by": { "type": "string" },
+        "total_amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "invite_code": { "type": "string" },
+        "member_uids": { "type": "array" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "name", "created_by", "total_amount", "currency", "status"]
+    },
+    "SplitMember": {
+      "title": "SplitMember",
+      "description": "Member participant in a split group",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "group_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "assigned_amount": { "type": "number" },
+        "role": { "type": "string", "enum": ["owner", "member"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "group_id", "name", "assigned_amount", "role"]
+    },
+    "GroupExpense": {
+      "title": "GroupExpense",
+      "description": "Expense item added to a shared split group",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "group_id": { "type": "string" },
+        "paid_by": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "group_id", "paid_by", "amount", "description"]
+    },
+    "SplitActivity": {
+      "title": "SplitActivity",
+      "description": "Activity stream events for a group",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "group_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "user_name": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "group_id", "user_id", "action"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles and account settings"
+    },
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Personal expenses recorded by individual users"
+    },
+    "/split_groups/{groupId}": {
+      "schema": { "$ref": "#/entities/SplitGroup" },
+      "description": "Shared expense splitting groups"
+    },
+    "/split_groups/{groupId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/SplitMember" },
+      "description": "Members assigned to a split group"
+    },
+    "/split_groups/{groupId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/GroupExpense" },
+      "description": "Expenses logged inside a shared group"
+    },
+    "/split_groups/{groupId}/activities/{activityId}": {
+      "schema": { "$ref": "#/entities/SplitActivity" },
+      "description": "Activity stream events for a group"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "KR",
+  "description": "Konvexa Rupxa — Your money, clearly mapped. Personal finance, daily expense tracking, and collaborative real-time expense splitting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
