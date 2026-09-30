@@ -25,21 +25,15 @@ import {
   Plus,
   Trash2,
   LogOut,
-  Clock,
   Search,
   Copy,
   CheckCircle2,
   AlertCircle,
-  Shield,
   History,
   Receipt,
   Calendar,
-  Tag,
   CreditCard,
   ChevronRight,
-  Sliders,
-  DollarSign,
-  Layers,
 } from 'lucide-react';
 
 interface SplitGroupDetailProps {
@@ -111,9 +105,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   useEffect(() => {
     fetchDetails();
 
-    // Subscribe to realtime updates for this specific group
     const unsubscribe = subscribeToGroupUpdates(groupId, () => {
-      // Whenever an expense or member or activity change happens in real-time, re-fetch
       fetchDetails();
     });
 
@@ -122,97 +114,60 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
     };
   }, [groupId, fetchDetails]);
 
-  // Check roles
-  const isOwner = group?.created_by === user?.id;
+  // Is current logged in user the owner/creator of the group?
+  const isOwner = Boolean(user && group && group.created_by === user.id);
   const currentMember = members.find((m) => m.user_id === user?.id);
 
-  // Calculations: Total expenses is dynamically calculated from all group expenses
+  // Calculate sum of group expenses
   const calculatedTotalExpenses = useMemo(() => {
-    if (expenses.length > 0) {
-      return parseMoney(expenses.reduce((sum, e) => sum + e.amount, 0));
-    }
-    return parseMoney(group?.total_amount || 0);
-  }, [expenses, group]);
+    return expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+  }, [expenses]);
 
-  // Calculate per-member contributions and balances
+  // Member balance calculation
   const memberBalances = useMemo(() => {
-    const balances: Record<
-      string,
-      { paid: number; share: number; net: number }
-    > = {};
+    const balances: { [userId: string]: { paid: number; share: number; net: number } } = {};
 
     members.forEach((m) => {
-      // How much this member paid upfront across all group expenses
-      const paid = expenses
-        .filter((e) => e.paid_by_user_id === m.user_id)
-        .reduce((sum, e) => sum + e.amount, 0);
+      balances[m.user_id] = { paid: 0, share: 0, net: 0 };
+    });
 
-      // How much this member's share is across all group expenses
-      const share = expenses.reduce((sum, e) => {
-        const s = e.shares?.find((sh) => sh.user_id === m.user_id);
-        return sum + (s ? s.amount : 0);
-      }, 0);
+    expenses.forEach((exp) => {
+      if (balances[exp.paid_by_user_id]) {
+        balances[exp.paid_by_user_id].paid += exp.amount;
+      }
+      exp.shares.forEach((share) => {
+        if (balances[share.user_id]) {
+          balances[share.user_id].share += share.amount;
+        }
+      });
+    });
 
-      const net = parseMoney(paid - share);
-
-      balances[m.user_id] = {
-        paid: parseMoney(paid),
-        share: parseMoney(expenses.length > 0 ? share : m.amount),
-        net,
-      };
+    members.forEach((m) => {
+      const record = balances[m.user_id];
+      if (record) {
+        record.net = Math.round((record.paid - record.share) * 100) / 100;
+      }
     });
 
     return balances;
   }, [members, expenses]);
 
-  // Handle Amount Edit Save (for manual adjustments)
-  const handleSaveAmount = async (targetUserId: string) => {
-    if (!user) return;
-    const safeAmount = parseMoney(editAmountVal);
-    if (safeAmount < 0) return;
-
-    setAmountSubmitting(true);
-    setError(null);
-
-    try {
-      await updateMemberAmount({
-        groupId,
-        targetUserId,
-        newAmount: safeAmount,
-        actorId: user.id,
-        actorProfile: user,
-      });
-
-      setEditingMemberId(null);
-      await fetchDetails();
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Failed to update member amount.');
-      }
-    } finally {
-      setAmountSubmitting(false);
-    }
-  };
-
-  // Search User by contact
+  // Search user by email or phone
   const handleSearchUser = async () => {
-    if (!searchQuery.trim() || !user) return;
+    if (!searchQuery.trim()) return;
     setSearching(true);
     setSearchAttempted(true);
-    setSearchResult(null);
     setError(null);
 
     try {
-      const result = await searchUserByContact(searchQuery, user.id);
-      setSearchResult(result);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Search failed.');
+      const res = await searchUserByContact(searchQuery);
+      setSearchResult(res);
+      if (!res) {
+        setError('No verified user found with that email or phone number.');
       }
+    } catch (err) {
+      console.error('Search user error:', err);
+      setError('Error searching for user.');
     } finally {
       setSearching(false);
     }
@@ -221,16 +176,23 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   // Add Member submit
   const handleAddMemberSubmit = async () => {
     if (!user || !searchResult) return;
+
+    if (members.some((m) => m.user_id === searchResult.id)) {
+      setError('This user is already a member of this split group.');
+      return;
+    }
+
     setAmountSubmitting(true);
     setError(null);
 
     try {
+      const amountVal = parseMoney(newMemberAmount);
       await addMemberToSplitGroup({
         groupId,
         actorId: user.id,
         actorProfile: user,
         newUserId: searchResult.id,
-        amount: parseMoney(newMemberAmount),
+        amount: amountVal,
       });
 
       setIsAddMemberOpen(false);
@@ -242,7 +204,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Failed to add member to split group.');
+        setError('Failed to add member to group.');
       }
     } finally {
       setAmountSubmitting(false);
@@ -346,9 +308,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto py-12 space-y-4">
-        <div className="h-8 w-40 bg-[#2A2926]/40 rounded-xl animate-pulse" />
-        <div className="h-32 rounded-2xl bg-[#2A2926]/40 animate-pulse" />
-        <div className="h-64 rounded-2xl bg-[#2A2926]/40 animate-pulse" />
+        <div className="h-8 w-40 bg-[#E6DFC8]/50 dark:bg-[#2A2926]/40 rounded-xl animate-pulse" />
+        <div className="h-32 rounded-2xl bg-[#E6DFC8]/50 dark:bg-[#2A2926]/40 animate-pulse" />
+        <div className="h-64 rounded-2xl bg-[#E6DFC8]/50 dark:bg-[#2A2926]/40 animate-pulse" />
       </div>
     );
   }
@@ -356,10 +318,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   if (!group) {
     return (
       <div className="max-w-4xl mx-auto py-16 text-center">
-        <p className="text-base font-semibold text-[#0B0B0B] dark:text-white">Split group not found.</p>
+        <p className="text-base font-bold text-black dark:text-white">Split group not found.</p>
         <button
           onClick={onBack}
-          className="mt-4 px-4 py-2 rounded-xl text-xs font-semibold bg-[#B08D57] text-[#0B0B0B] hover:bg-[#9F7E4C]"
+          className="mt-4 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105"
         >
           Back to Splitter
         </button>
@@ -375,8 +337,8 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           id="back-to-splitter-btn"
           type="button"
           onClick={onBack}
-          className={`inline-flex items-center gap-1.5 text-xs font-semibold transition-colors ${
-            isDark ? 'text-[#A6A29A] hover:text-white' : 'text-[#6F5738] hover:text-[#0B0B0B]'
+          className={`inline-flex items-center gap-1.5 text-xs font-bold transition-colors ${
+            isDark ? 'text-[#A6A29A] hover:text-white' : 'text-[#292524] hover:text-black'
           }`}
         >
           <ArrowLeft className="w-4 h-4" />
@@ -389,11 +351,13 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
             id="share-split-modal-btn"
             type="button"
             onClick={() => setIsShareModalOpen(true)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#2A2926] hover:border-[#6F5738] transition-colors ${
-              isDark ? 'bg-[#0B0B0B] text-white' : 'bg-[#F5F2EA] text-[#0B0B0B]'
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+              isDark
+                ? 'bg-[#0B0B0B] text-white border-[#2A2926] hover:border-[#6F5738]'
+                : 'bg-white text-black border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
             }`}
           >
-            <Share2 className="w-3.5 h-3.5 text-[#B08D57]" />
+            <Share2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
             <span>Share Split</span>
           </button>
 
@@ -407,11 +371,13 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 setEditGroupTotal(group.total_amount.toString());
                 setIsEditingGroup(true);
               }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#2A2926] hover:border-[#6F5738] transition-colors ${
-                isDark ? 'bg-[#0B0B0B] text-white' : 'bg-[#F5F2EA] text-[#0B0B0B]'
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                isDark
+                  ? 'bg-[#0B0B0B] text-white border-[#2A2926] hover:border-[#6F5738]'
+                  : 'bg-white text-black border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
               }`}
             >
-              <Edit2 className="w-3.5 h-3.5 text-[#B08D57]" />
+              <Edit2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
               <span>Edit Details</span>
             </button>
           )}
@@ -422,9 +388,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               id="leave-split-btn"
               type="button"
               onClick={() => handleRemoveMember(user!.id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#6F5738]/40 hover:bg-[#6F5738]/20 transition-colors ${
-                isDark ? 'text-[#A6A29A] hover:text-white' : 'text-[#6F5738] hover:text-[#0B0B0B]'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-rose-300 hover:bg-rose-50 text-rose-700 transition-colors`}
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Leave Group</span>
@@ -437,13 +401,13 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       {error && (
         <div
           id="split-detail-error"
-          className="p-3.5 rounded-xl border border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-center justify-between animate-in fade-in"
+          className="p-3.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs flex items-center justify-between font-bold animate-in fade-in"
         >
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
             <span>{error}</span>
           </div>
-          <button onClick={() => setError(null)} className="text-[#A6A29A] hover:text-white">
+          <button onClick={() => setError(null)} className="text-black/60 hover:text-black">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -455,59 +419,59 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         className={`p-6 sm:p-7 rounded-2xl border transition-all ${
           isDark
             ? 'bg-[#0B0B0B] border-[#2A2926] text-white'
-            : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] shadow-sm'
+            : 'bg-white border-[#E6DFC8] text-black shadow-xs'
         }`}
       >
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 pb-6 border-b border-[#2A2926]">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 pb-6 border-b border-[#E6DFC8] dark:border-[#2A2926]">
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span
-                className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                   isOwner
-                    ? 'bg-[#B08D57]/15 text-[#B08D57] border-[#6F5738]/30'
-                    : 'bg-[#6F5738]/20 text-[#A6A29A] border-[#6F5738]/30'
+                    ? 'bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border-[#D4AF37]/40'
+                    : 'bg-[#FAF8F5] text-[#292524] border-[#E6DFC8] dark:bg-[#151515] dark:text-[#A6A29A] dark:border-[#2A2926]'
                 }`}
               >
                 {isOwner ? 'Created by you (Owner)' : 'Member'}
               </span>
-              <span className="text-xs text-[#6F5738] dark:text-[#A6A29A] flex items-center gap-1">
-                <Users className="w-3.5 h-3.5" />
+              <span className="text-xs text-[#292524] dark:text-[#A6A29A] flex items-center gap-1 font-semibold">
+                <Users className="w-3.5 h-3.5 text-[#C59B27]" />
                 <span>{members.length} members</span>
               </span>
-              <span className="text-xs text-[#6F5738] dark:text-[#A6A29A] flex items-center gap-1">
-                <Receipt className="w-3.5 h-3.5 text-[#B08D57]" />
+              <span className="text-xs text-[#292524] dark:text-[#A6A29A] flex items-center gap-1 font-semibold">
+                <Receipt className="w-3.5 h-3.5 text-[#C59B27]" />
                 <span>{expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'}</span>
               </span>
             </div>
 
             <h1
-              className="text-2xl sm:text-3xl font-bold tracking-tight text-[#0B0B0B] dark:text-white"
+              className="text-2xl sm:text-3xl font-black tracking-tight text-black dark:text-white"
               style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
               {group.name}
             </h1>
-            <p className="text-xs text-[#6F5738] dark:text-[#A6A29A]">
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
               Shared expenses, real-time recalculation & transparent split contributions
             </p>
           </div>
 
-          <div className="text-left sm:text-right bg-[#151515]/30 dark:bg-[#151515]/60 p-4 rounded-xl border border-[#2A2926] sm:min-w-[200px]">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#6F5738] dark:text-[#A6A29A] block mb-1">
+          <div className="text-left sm:text-right bg-[#FAF8F5] dark:bg-[#151515]/60 p-4 rounded-xl border border-[#E6DFC8] dark:border-[#2A2926] sm:min-w-[200px]">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#292524] dark:text-[#A6A29A] block mb-1">
               Total Expenses
             </span>
             <span
               id="group-total-expenses-display"
-              className="text-2xl sm:text-3xl font-bold font-mono tracking-tight text-[#B08D57]"
+              className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-[#8C6B1F] dark:text-[#E6CA65]"
             >
               {formatCurrency(calculatedTotalExpenses)}
             </span>
-            <span className="text-[11px] text-[#6F5738] dark:text-[#A6A29A] block mt-1">
+            <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] block mt-1 font-medium">
               {expenses.length === 0 ? 'No expenses added yet' : `Calculated across ${expenses.length} bills`}
             </span>
           </div>
         </div>
 
-        {/* Action Buttons Bar: Clear "+ Add Expense" & "+ Add Member" buttons */}
+        {/* Action Buttons Bar */}
         <div className="pt-5 flex flex-wrap items-center gap-3">
           <button
             id="add-expense-main-btn"
@@ -516,9 +480,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setEditingExpense(null);
               setIsAddExpenseOpen(true);
             }}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] active:scale-95 transition-all shadow-md"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 transition-all shadow-sm border border-[#B38A22]/40"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 stroke-[3]" />
             <span>+ Add Expense</span>
           </button>
 
@@ -531,26 +495,26 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setSearchResult(null);
               setSearchAttempted(false);
             }}
-            className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
+            className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold border transition-all ${
               isDark
                 ? 'border-[#2A2926] bg-[#151515] hover:border-[#6F5738] text-white'
-                : 'border-[#2A2926]/40 bg-white hover:border-[#6F5738] text-[#0B0B0B]'
+                : 'border-[#E6DFC8] bg-white hover:border-[#D4AF37] text-black shadow-xs'
             }`}
           >
-            <Plus className="w-3.5 h-3.5 text-[#B08D57]" />
+            <Plus className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65] stroke-[3]" />
             <span>+ Add Member</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
-            className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
+            className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold border transition-all ${
               isDark
                 ? 'border-[#2A2926] bg-[#151515] hover:border-[#6F5738] text-white'
-                : 'border-[#2A2926]/40 bg-white hover:border-[#6F5738] text-[#0B0B0B]'
+                : 'border-[#E6DFC8] bg-white hover:border-[#D4AF37] text-black shadow-xs'
             }`}
           >
-            <Share2 className="w-3.5 h-3.5 text-[#B08D57]" />
+            <Share2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
             <span>Invite Link</span>
           </button>
         </div>
@@ -560,22 +524,22 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       <div
         id="split-expenses-section"
         className={`rounded-2xl border p-5 sm:p-6 transition-all ${
-          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926] shadow-sm'
+          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-white border-[#E6DFC8] shadow-xs'
         }`}
       >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-[#B08D57]/15 text-[#B08D57] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#C59B27] flex items-center justify-center">
               <Receipt className="w-4 h-4" />
             </div>
             <div>
               <h2
-                className="text-lg font-bold tracking-tight text-[#0B0B0B] dark:text-white"
+                className="text-lg font-black tracking-tight text-black dark:text-white"
                 style={{ fontFamily: 'Space Grotesk, sans-serif' }}
               >
                 Group Expenses ({expenses.length})
               </h2>
-              <p className="text-xs text-[#6F5738] dark:text-[#A6A29A]">
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
                 All expenses logged inside {group.name}
               </p>
             </div>
@@ -588,9 +552,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setEditingExpense(null);
               setIsAddExpenseOpen(true);
             }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] shadow-sm transition-all"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 shadow-xs transition-all border border-[#B38A22]/40"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
             <span>Add Expense</span>
           </button>
         </div>
@@ -600,19 +564,19 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           <div
             id="empty-expenses-state"
             className={`py-12 px-4 rounded-xl border border-dashed text-center flex flex-col items-center justify-center ${
-              isDark ? 'border-[#2A2926] bg-[#151515]/30' : 'border-[#2A2926]/30 bg-white/40'
+              isDark ? 'border-[#2A2926] bg-[#151515]/30' : 'border-[#E6DFC8] bg-[#FAF8F5]'
             }`}
           >
-            <div className="w-12 h-12 rounded-2xl bg-[#B08D57]/10 border border-[#B08D57]/20 flex items-center justify-center text-[#B08D57] mb-3">
+            <div className="w-12 h-12 rounded-2xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#C59B27] mb-3">
               <Receipt className="w-6 h-6" />
             </div>
             <h3
-              className="text-base font-bold text-[#0B0B0B] dark:text-white mb-1"
+              className="text-base font-black text-black dark:text-white mb-1"
               style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
               No expenses added yet
             </h3>
-            <p className="text-xs text-[#6F5738] dark:text-[#A6A29A] max-w-sm mb-4">
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] max-w-sm mb-4 font-medium">
               Add meals, travel, hotel, parking, or tickets. You can add unlimited expenses inside this group.
             </p>
             <button
@@ -621,9 +585,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 setEditingExpense(null);
                 setIsAddExpenseOpen(true);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 transition-colors border border-[#B38A22]/40"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
               <span>+ Add First Expense</span>
             </button>
           </div>
@@ -656,35 +620,35 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                   className={`p-4 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all ${
                     isDark
                       ? 'bg-[#0B0B0B] border-[#2A2926] hover:border-[#6F5738]'
-                      : 'bg-[#F5F2EA] border-[#2A2926]/40 hover:border-[#6F5738] shadow-sm'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
                   }`}
                 >
                   <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#B08D57]/10 border border-[#B08D57]/20 flex items-center justify-center text-[#B08D57] shrink-0 mt-0.5">
+                    <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#C59B27] shrink-0 mt-0.5">
                       <Receipt className="w-5 h-5" />
                     </div>
 
                     <div className="min-w-0 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-sm text-[#0B0B0B] dark:text-white truncate">
+                        <span className="font-black text-sm text-black dark:text-white truncate">
                           {exp.name}
                         </span>
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#B08D57]/15 text-[#B08D57] border border-[#B08D57]/30">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/30">
                           {exp.category}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-3 text-[11px] text-[#6F5738] dark:text-[#A6A29A] flex-wrap">
+                      <div className="flex items-center gap-3 text-[11px] text-[#292524] dark:text-[#A6A29A] flex-wrap font-medium">
                         <span className="flex items-center gap-1">
-                          <CreditCard className="w-3 h-3" />
+                          <CreditCard className="w-3 h-3 text-[#C59B27]" />
                           <span>
-                            Paid by <strong className="font-semibold text-[#0B0B0B] dark:text-white">{paidByName}</strong>
+                            Paid by <strong className="font-bold text-black dark:text-white">{paidByName}</strong>
                             {isPaidByMe && ' (You)'}
                           </span>
                         </span>
                         <span>•</span>
                         <span className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3" />
+                          <Calendar className="w-3 h-3 text-[#C59B27]" />
                           <span>{formattedDate}</span>
                         </span>
                         <span>•</span>
@@ -697,15 +661,15 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
 
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right">
-                      <span className="text-base sm:text-lg font-bold font-mono tracking-tight text-[#B08D57] block">
+                      <span className="text-base sm:text-lg font-black font-mono tracking-tight text-[#8C6B1F] dark:text-[#E6CA65] block">
                         {formatCurrency(exp.amount)}
                       </span>
-                      <span className="text-[10px] text-[#6F5738] dark:text-[#A6A29A]">
+                      <span className="text-[10px] text-[#292524] dark:text-[#A6A29A] font-medium">
                         Click for breakdown
                       </span>
                     </div>
 
-                    <ChevronRight className="w-4 h-4 text-[#6F5738] dark:text-[#A6A29A]" />
+                    <ChevronRight className="w-4 h-4 text-[#8C6B1F] dark:text-[#A6A29A]" />
                   </div>
                 </div>
               );
@@ -714,26 +678,26 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         )}
       </div>
 
-      {/* 3. Members Section (Real database members only) */}
+      {/* 3. Members Section */}
       <div
         id="split-members-section"
         className={`rounded-2xl border p-5 sm:p-6 transition-all ${
-          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926] shadow-sm'
+          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-white border-[#E6DFC8] shadow-xs'
         }`}
       >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-[#B08D57]/15 text-[#B08D57] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#C59B27] flex items-center justify-center">
               <Users className="w-4 h-4" />
             </div>
             <div>
               <h2
-                className="text-lg font-bold tracking-tight text-[#0B0B0B] dark:text-white"
+                className="text-lg font-black tracking-tight text-black dark:text-white"
                 style={{ fontFamily: 'Space Grotesk, sans-serif' }}
               >
                 Members ({members.length})
               </h2>
-              <p className="text-xs text-[#6F5738] dark:text-[#A6A29A]">
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
                 Actual verified participants in this split group
               </p>
             </div>
@@ -748,9 +712,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setSearchResult(null);
               setSearchAttempted(false);
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] shadow-sm transition-all"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 shadow-xs transition-all border border-[#B38A22]/40"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
             <span>+ Add Member</span>
           </button>
         </div>
@@ -770,37 +734,37 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
                   isSelf
                     ? isDark
-                      ? 'bg-[#0B0B0B] border-[#B08D57]/60 ring-1 ring-[#B08D57]/30'
-                      : 'bg-[#F5F2EA] border-[#B08D57]/60 ring-1 ring-[#B08D57]/30'
+                      ? 'bg-[#0B0B0B] border-[#D4AF37] ring-1 ring-[#D4AF37]/30'
+                      : 'bg-[#FAF8F5] border-[#D4AF37] ring-1 ring-[#D4AF37]/30 shadow-xs'
                     : isDark
                     ? 'bg-[#0B0B0B] border-[#2A2926]'
-                    : 'bg-[#F5F2EA] border-[#2A2926]/40'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8]'
                 }`}
               >
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-[#2A2926] text-white border border-[#6F5738]/30 flex items-center justify-center font-bold text-xs shrink-0">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#DFB15B] to-[#C59B27] text-black border border-[#B38A22]/40 flex items-center justify-center font-black text-xs shrink-0">
                         {displayName ? displayName[0]?.toUpperCase() : 'U'}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-sm truncate text-[#0B0B0B] dark:text-white">
+                          <span className="font-bold text-sm truncate text-black dark:text-white">
                             {displayName}
                           </span>
                           {isSelf && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-[#B08D57] text-[#0B0B0B]">
+                            <span className="text-[10px] px-1.5 py-0.2 rounded font-black bg-[#D4AF37] text-black">
                               You
                             </span>
                           )}
                           {member.user_id === group.created_by && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-[#B08D57]/15 text-[#B08D57] border border-[#6F5738]/30">
+                            <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/30">
                               Creator
                             </span>
                           )}
                         </div>
                         {contactIdentifier && (
-                          <span className="text-[11px] text-[#6F5738] dark:text-[#A6A29A] block truncate">
+                          <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] block truncate font-medium">
                             {contactIdentifier}
                           </span>
                         )}
@@ -813,11 +777,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                         type="button"
                         onClick={() => handleRemoveMember(member.user_id)}
                         title="Remove member"
-                        className={`p-1 rounded transition-colors ${
-                          isDark
-                            ? 'text-[#A6A29A] hover:text-white hover:bg-[#6F5738]/30'
-                            : 'text-[#6F5738] hover:text-[#0B0B0B] hover:bg-[#2A2926]/20'
-                        }`}
+                        className="p-1 rounded text-rose-600 hover:bg-rose-50 transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -826,34 +786,34 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 </div>
 
                 {/* Member balance info */}
-                <div className="mt-4 pt-3 border-t border-[#2A2926] space-y-1.5">
+                <div className="mt-4 pt-3 border-t border-[#E6DFC8] dark:border-[#2A2926] space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#6F5738] dark:text-[#A6A29A]">Paid Upfront:</span>
-                    <span className="font-mono font-semibold text-[#0B0B0B] dark:text-white">
+                    <span className="text-[#292524] dark:text-[#A6A29A] font-semibold">Paid Upfront:</span>
+                    <span className="font-mono font-bold text-black dark:text-white">
                       {formatCurrency(bal.paid)}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#6F5738] dark:text-[#A6A29A]">Share of Expenses:</span>
-                    <span className="font-mono font-semibold text-[#0B0B0B] dark:text-white">
+                    <span className="text-[#292524] dark:text-[#A6A29A] font-semibold">Share of Expenses:</span>
+                    <span className="font-mono font-bold text-black dark:text-white">
                       {formatCurrency(bal.share)}
                     </span>
                   </div>
 
                   {/* Net status */}
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-[#2A2926]/40">
-                    <span className="font-semibold text-[#0B0B0B] dark:text-white">Net Balance:</span>
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-[#E6DFC8] dark:border-[#2A2926]/40">
+                    <span className="font-bold text-black dark:text-white">Net Balance:</span>
                     {bal.net > 0 ? (
-                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      <span className="font-mono font-black text-emerald-700 dark:text-emerald-400">
                         +{formatCurrency(bal.net)} (to receive)
                       </span>
                     ) : bal.net < 0 ? (
-                      <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                      <span className="font-mono font-black text-amber-700 dark:text-amber-400">
                         -{formatCurrency(Math.abs(bal.net))} (to pay)
                       </span>
                     ) : (
-                      <span className="font-mono text-[#6F5738] dark:text-[#A6A29A]">
+                      <span className="font-mono font-semibold text-[#292524] dark:text-[#A6A29A]">
                         Settled (₹0.00)
                       </span>
                     )}
@@ -869,24 +829,24 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       <div
         id="split-activity-section"
         className={`rounded-2xl border p-5 sm:p-6 transition-all ${
-          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926] shadow-sm'
+          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-white border-[#E6DFC8] shadow-xs'
         }`}
       >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-[#B08D57]" />
+            <History className="w-4 h-4 text-[#8C6B1F] dark:text-[#E6CA65]" />
             <h2
-              className="text-lg font-bold tracking-tight text-[#0B0B0B] dark:text-white"
+              className="text-lg font-black tracking-tight text-black dark:text-white"
               style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
               Activity History
             </h2>
           </div>
           <span
-            className={`text-[10px] px-2 py-0.5 rounded-full border ${
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
               isDark
                 ? 'bg-[#2A2926] text-[#A6A29A] border-[#2A2926]'
-                : 'bg-[#2A2926]/10 text-[#6F5738] border-[#2A2926]'
+                : 'bg-[#FAF8F5] text-[#292524] border-[#E6DFC8]'
             }`}
           >
             Immutable Audit Log
@@ -895,42 +855,106 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
 
         {activity.length === 0 ? (
           <div id="activity-empty-state" className="py-8 text-center">
-            <p className="text-xs text-[#6F5738] dark:text-[#A6A29A]">No activity yet.</p>
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">No activity yet.</p>
           </div>
         ) : (
           <div className="space-y-6">
             {Object.entries(groupedActivity).map(([dateGroup, items]) => (
               <div key={dateGroup} className="space-y-2.5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-[#B08D57]">
+                <div className="text-xs font-bold uppercase tracking-wider text-[#8C6B1F] dark:text-[#E6CA65]">
                   {dateGroup}
                 </div>
-                <div className="space-y-2 pl-2 border-l border-[#2A2926]">
-                  {items.map((act) => (
-                    <div
-                      key={act.id}
-                      id={`activity-item-${act.id}`}
-                      className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
-                        isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926]'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2.5 min-w-0">
-                        <div className="w-2 h-2 rounded-full bg-[#B08D57] mt-1.5 shrink-0" />
-                        <div>
-                          <p className="font-medium text-[#0B0B0B] dark:text-white">
-                            {act.description}
-                          </p>
-                          {act.old_value && act.new_value && (
-                            <p className="font-mono text-[11px] text-[#B08D57] mt-0.5">
-                              {formatCurrency(act.old_value)} → {formatCurrency(act.new_value)}
-                            </p>
-                          )}
+                <div className="space-y-2 pl-2 border-l border-[#E6DFC8] dark:border-[#2A2926]">
+                  {items.map((act) => {
+                    const isDeleted = act.action_type === 'delete_expense' || act.action_type === 'EXPENSE_DELETED';
+
+                    if (isDeleted) {
+                      return (
+                        <div
+                          key={act.id}
+                          id={`activity-item-${act.id}`}
+                          className={`p-3.5 rounded-xl border text-xs space-y-2.5 transition-all ${
+                            isDark ? 'bg-[#151515] border-rose-900/40 text-white' : 'bg-rose-50/40 border-rose-200 text-black'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                              <span className="font-black text-xs text-rose-700 dark:text-rose-400">
+                                Expense deleted
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] font-mono font-medium">
+                              {formatTime(act.created_at)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1 border-t border-rose-200/50 dark:border-rose-900/40">
+                            <div>
+                              <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Deleted by:</span>
+                              <span className="font-bold text-black dark:text-white">
+                                {act.actor?.full_name || 'Group Member'}
+                              </span>
+                            </div>
+
+                            {act.old_value && (
+                              <div>
+                                <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Amount:</span>
+                                <span className="font-mono font-bold text-rose-700 dark:text-rose-400">
+                                  {formatCurrency(act.old_value)}
+                                </span>
+                              </div>
+                            )}
+
+                            {act.deletion_reason && (
+                              <div>
+                                <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Reason:</span>
+                                <span className="font-bold text-black dark:text-white">
+                                  {act.deletion_reason}
+                                </span>
+                              </div>
+                            )}
+
+                            {act.deletion_note && (
+                              <div className="sm:col-span-2">
+                                <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Explanation:</span>
+                                <p className="font-medium text-black dark:text-white italic">
+                                  "{act.deletion_note}"
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={act.id}
+                        id={`activity-item-${act.id}`}
+                        className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <div className="w-2 h-2 rounded-full bg-[#D4AF37] mt-1.5 shrink-0" />
+                          <div>
+                            <p className="font-bold text-black dark:text-white">
+                              {act.description}
+                            </p>
+                            {act.old_value && act.new_value && (
+                              <p className="font-mono text-[11px] text-[#8C6B1F] dark:text-[#E6CA65] mt-0.5 font-bold">
+                                {formatCurrency(act.old_value)} → {formatCurrency(act.new_value)}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] shrink-0 font-mono font-medium">
+                          {formatTime(act.created_at)}
+                        </span>
                       </div>
-                      <span className="text-[11px] text-[#6F5738] dark:text-[#A6A29A] shrink-0 font-mono">
-                        {formatTime(act.created_at)}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -961,6 +985,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         expense={selectedDetailExpense}
         groupId={groupId}
         members={members}
+        isOwner={isOwner}
         onEdit={(exp) => {
           setSelectedDetailExpense(null);
           setIsDetailExpenseOpen(false);
@@ -979,47 +1004,45 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           <div
             id="share-modal-card"
             className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${
-              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B]'
+              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-white border-[#E6DFC8] text-black shadow-xl'
             }`}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-[#2A2926]">
-              <h3 className="font-bold text-base text-[#0B0B0B] dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+            <div className="flex items-center justify-between pb-3 border-b border-[#E6DFC8] dark:border-[#2A2926]">
+              <h3 className="font-black text-base text-black dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
                 Share Split Invitation
               </h3>
               <button
                 type="button"
                 onClick={() => setIsShareModalOpen(false)}
-                className={`transition-colors ${
-                  isDark ? 'text-[#A6A29A] hover:text-white' : 'text-[#6F5738] hover:text-[#0B0B0B]'
-                }`}
+                className="text-black/60 dark:text-[#A6A29A] hover:text-black transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-[#6F5738] dark:text-[#A6A29A] mt-3 mb-4">
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium mt-3 mb-4">
               Share this invite link with any Konvexa Rupxa user to let them join "{group.name}" directly.
             </p>
 
             <div
               className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs font-mono select-all ${
-                isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B]'
+                isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-[#FAF8F5] border-[#E6DFC8] text-black font-semibold'
               }`}
             >
               <span className="truncate">{`${window.location.origin}?join_split=${groupId}`}</span>
               <button
                 type="button"
                 onClick={handleCopyInvite}
-                className="p-1.5 rounded-lg bg-[#B08D57] text-[#0B0B0B] hover:bg-[#9F7E4C] shrink-0 transition-colors"
+                className="p-1.5 rounded-lg bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105 shrink-0 transition-colors shadow-xs border border-[#B38A22]/40"
                 title="Copy link"
               >
-                {copiedLink ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {copiedLink ? <CheckCircle2 className="w-4 h-4 stroke-[3]" /> : <Copy className="w-4 h-4 stroke-[2.5]" />}
               </button>
             </div>
 
             {copiedLink && (
-              <p className="text-xs text-[#B08D57] mt-2 flex items-center gap-1.5">
-                <Check className="w-3.5 h-3.5" />
+              <p className="text-xs text-[#8C6B1F] dark:text-[#E6CA65] font-bold mt-2 flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
                 <span>Link copied to clipboard!</span>
               </p>
             )}
@@ -1028,10 +1051,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               <button
                 type="button"
                 onClick={() => setIsShareModalOpen(false)}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+                className={`px-4 py-2 rounded-xl text-xs font-bold border transition-colors ${
                   isDark
                     ? 'bg-[#2A2926] hover:bg-[#6F5738]/40 text-white border-[#2A2926]'
-                    : 'bg-[#2A2926]/10 hover:bg-[#2A2926]/20 text-[#0B0B0B] border-[#2A2926]'
+                    : 'bg-[#FAF8F5] hover:bg-white text-black border-[#E6DFC8]'
                 }`}
               >
                 Done
@@ -1050,31 +1073,29 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           <div
             id="add-member-modal-card"
             className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${
-              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B]'
+              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-white border-[#E6DFC8] text-black shadow-xl'
             }`}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-[#2A2926]">
-              <h3 className="font-bold text-base text-[#0B0B0B] dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+            <div className="flex items-center justify-between pb-3 border-b border-[#E6DFC8] dark:border-[#2A2926]">
+              <h3 className="font-black text-base text-black dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
                 Add Member to Split
               </h3>
               <button
                 type="button"
                 onClick={() => setIsAddMemberOpen(false)}
-                className={`transition-colors ${
-                  isDark ? 'text-[#A6A29A] hover:text-white' : 'text-[#6F5738] hover:text-[#0B0B0B]'
-                }`}
+                className="text-black/60 dark:text-[#A6A29A] hover:text-black transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-[#6F5738] dark:text-[#A6A29A] mt-3 mb-3">
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium mt-3 mb-3">
               Search by email or phone number to find existing Konvexa Rupxa users.
             </p>
 
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A6A29A]" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8C6B1F] dark:text-[#A6A29A]" />
                 <input
                   id="add-member-search-input"
                   type="text"
@@ -1091,10 +1112,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                       handleSearchUser();
                     }
                   }}
-                  className={`w-full pl-9 pr-3 py-2 text-xs rounded-xl border outline-none ${
+                  className={`w-full pl-9 pr-3 py-2 text-xs rounded-xl border outline-none font-medium ${
                     isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#B08D57]'
-                      : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] placeholder-[#6F5738]/60 focus:border-[#B08D57]'
+                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#292524]/60 focus:border-[#D4AF37] focus:bg-white'
                   }`}
                 />
               </div>
@@ -1103,10 +1124,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 type="button"
                 onClick={handleSearchUser}
                 disabled={searching || !searchQuery.trim()}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-colors disabled:opacity-50 ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-50 ${
                   isDark
                     ? 'bg-[#2A2926] hover:bg-[#6F5738]/40 border-[#2A2926] text-white'
-                    : 'bg-[#2A2926]/10 hover:bg-[#2A2926]/20 border-[#2A2926] text-[#0B0B0B]'
+                    : 'bg-[#FAF8F5] hover:bg-white border-[#E6DFC8] text-black'
                 }`}
               >
                 {searching ? 'Searching...' : 'Search'}
@@ -1116,23 +1137,23 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
             {searchResult && (
               <div
                 className={`mt-4 p-3 rounded-xl border space-y-3 ${
-                  isDark ? 'border-[#2A2926] bg-[#0B0B0B]' : 'border-[#2A2926] bg-[#F5F2EA]'
+                  isDark ? 'border-[#2A2926] bg-[#0B0B0B]' : 'border-[#E6DFC8] bg-[#FAF8F5]'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-[#B08D57]/15 text-[#B08D57] border border-[#6F5738]/30 flex items-center justify-center font-bold text-xs">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#DFB15B] to-[#C59B27] text-black border border-[#B38A22]/40 flex items-center justify-center font-black text-xs">
                       {searchResult.full_name[0]?.toUpperCase()}
                     </div>
                     <div>
-                      <p className="text-xs font-semibold text-[#0B0B0B] dark:text-white">{searchResult.full_name}</p>
-                      <p className="text-[11px] text-[#6F5738] dark:text-[#A6A29A]">{searchResult.masked_identifier}</p>
+                      <p className="text-xs font-bold text-black dark:text-white">{searchResult.full_name}</p>
+                      <p className="text-[11px] text-[#292524] dark:text-[#A6A29A] font-medium">{searchResult.masked_identifier}</p>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-[#6F5738] dark:text-[#A6A29A] mb-1">
+                  <label className="block text-[11px] text-[#292524] dark:text-[#A6A29A] font-bold uppercase tracking-wider mb-1">
                     Initial Assigned Amount (₹)
                   </label>
                   <input
@@ -1141,10 +1162,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                     min="0"
                     value={newMemberAmount}
                     onChange={(e) => setNewMemberAmount(e.target.value)}
-                    className={`w-full px-3 py-1.5 rounded-lg border text-xs font-mono outline-none focus:border-[#B08D57] ${
+                    className={`w-full px-3 py-1.5 rounded-lg border text-xs font-mono font-bold outline-none focus:border-[#D4AF37] ${
                       isDark
                         ? 'border-[#2A2926] bg-[#0B0B0B] text-white'
-                        : 'border-[#2A2926] bg-[#F5F2EA] text-[#0B0B0B]'
+                        : 'border-[#E6DFC8] bg-white text-black'
                     }`}
                   />
                 </div>
@@ -1154,16 +1175,16 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                   type="button"
                   onClick={handleAddMemberSubmit}
                   disabled={amountSubmitting}
-                  className="w-full py-2 rounded-xl text-xs font-semibold bg-[#B08D57] hover:bg-[#9F7E4C] text-[#0B0B0B] flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                  className="w-full py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 text-black flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 border border-[#B38A22]/40 shadow-xs"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
                   <span>Add to Group</span>
                 </button>
               </div>
             )}
 
             {searchAttempted && !searching && !searchResult && (
-              <p className="text-xs text-[#6F5738] dark:text-[#A6A29A] mt-3 text-center">
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] mt-3 text-center font-medium">
                 No Konvexa Rupxa user found with this contact.
               </p>
             )}
@@ -1180,19 +1201,17 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           <div
             id="edit-group-modal-card"
             className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${
-              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B]'
+              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-white border-[#E6DFC8] text-black shadow-xl'
             }`}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-[#2A2926]">
-              <h3 className="font-bold text-base text-[#0B0B0B] dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+            <div className="flex items-center justify-between pb-3 border-b border-[#E6DFC8] dark:border-[#2A2926]">
+              <h3 className="font-black text-base text-black dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
                 Edit Group Details
               </h3>
               <button
                 type="button"
                 onClick={() => setIsEditingGroup(false)}
-                className={`transition-colors ${
-                  isDark ? 'text-[#A6A29A] hover:text-white' : 'text-[#6F5738] hover:text-[#0B0B0B]'
-                }`}
+                className="text-black/60 dark:text-[#A6A29A] hover:text-black transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1200,23 +1219,23 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
 
             <div className="mt-4 space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-[#6F5738] dark:text-[#A6A29A] mb-1">
+                <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white mb-1">
                   Group Name
                 </label>
                 <input
                   type="text"
                   value={editGroupName}
                   onChange={(e) => setEditGroupName(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-xl text-xs border outline-none ${
+                  className={`w-full px-3 py-2 rounded-xl text-xs font-medium border outline-none ${
                     isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#B08D57]'
-                      : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] focus:border-[#B08D57]'
+                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
                   }`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#6F5738] dark:text-[#A6A29A] mb-1">
+                <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white mb-1">
                   Estimated Total (₹)
                 </label>
                 <input
@@ -1225,10 +1244,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                   min="0"
                   value={editGroupTotal}
                   onChange={(e) => setEditGroupTotal(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-xl text-xs font-mono border outline-none ${
+                  className={`w-full px-3 py-2 rounded-xl text-xs font-mono font-bold border outline-none ${
                     isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#B08D57]'
-                      : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] focus:border-[#B08D57]'
+                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
                   }`}
                 />
               </div>
@@ -1237,10 +1256,10 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 <button
                   type="button"
                   onClick={() => setIsEditingGroup(false)}
-                  className={`px-3 py-1.5 rounded-xl text-xs border transition-colors ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
                     isDark
                       ? 'border-[#2A2926] text-[#A6A29A] hover:bg-[#2A2926]'
-                      : 'border-[#2A2926] text-[#6F5738] hover:bg-[#2A2926]/10'
+                      : 'border-[#E6DFC8] text-black hover:bg-[#FAF8F5]'
                   }`}
                 >
                   Cancel
@@ -1249,7 +1268,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                   type="button"
                   onClick={handleSaveGroupDetails}
                   disabled={amountSubmitting}
-                  className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-[#B08D57] text-[#0B0B0B] hover:bg-[#9F7E4C] disabled:opacity-50"
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105 disabled:opacity-50 border border-[#B38A22]/40 shadow-xs"
                 >
                   Save Changes
                 </button>

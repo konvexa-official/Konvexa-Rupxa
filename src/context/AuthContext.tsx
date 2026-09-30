@@ -1,12 +1,11 @@
 /**
  * Konvexa Rupxa Authentication Context
- * Powered by Firebase Authentication and Cloud Firestore.
- * Supports Google Sign-In with popup, Email/Password auth, and persistent user profiles.
+ * Powered by Firebase Authentication with Cloud Firestore.
+ * Uses Firebase Email/Password authentication provider with real user accounts.
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
-  signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -15,10 +14,11 @@ import {
   updateProfile as updateFirebaseProfile,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { auth, googleProvider, isFirebaseConfigured, testFirestoreConnection } from '../lib/firebase';
+import { auth, isFirebaseConfigured, testFirestoreConnection } from '../lib/firebase';
 import { getProfile, createOrUpdateProfile } from '../lib/db';
 import { Profile } from '../types';
 import { normalizePhoneNumber } from '../lib/formatters';
+import { formatFirebaseAuthError } from '../lib/authErrors';
 
 interface AuthContextType {
   user: Profile | null;
@@ -33,8 +33,6 @@ interface AuthContextType {
     confirmPassword: string;
   }) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
-  loginAsDemoUser: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateProfileData: (updates: { fullName?: string; phone?: string; avatarUrl?: string }) => Promise<void>;
   updateProfile: (updates: { full_name?: string; fullName?: string; phone?: string; avatar_url?: string; avatarUrl?: string }) => Promise<void>;
@@ -42,18 +40,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const LOCAL_SESSION_KEY = 'rupxa_active_session_v1';
-
-export const DEV_DEFAULT_USER: Profile = {
-  id: 'usr_konvexa_dev',
-  full_name: 'Konvexa User',
-  email: 'hello.konvexa@gmail.com',
-  phone: '9876543210',
-  avatar_url: null,
-  created_at: '2026-01-01T00:00:00.000Z',
-  updated_at: new Date().toISOString(),
-};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<Profile | null>(null);
@@ -95,7 +81,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           } catch (err) {
             console.error('Error syncing user profile from Firestore:', err);
-            // Create fallback profile from auth user details
             if (mounted) {
               setUser({
                 id: fbUser.uid,
@@ -109,23 +94,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
         } else {
-          // Check local stored session fallback
-          const localStored = localStorage.getItem(LOCAL_SESSION_KEY);
-          if (localStored) {
-            try {
-              const parsed = JSON.parse(localStored);
-              if (parsed?.id) {
-                const prof = await getProfile(parsed.id);
-                if (mounted) setUser(prof || DEV_DEFAULT_USER);
-              } else {
-                if (mounted) setUser(null);
-              }
-            } catch {
-              if (mounted) setUser(null);
-            }
-          } else {
-            if (mounted) setUser(null);
-          }
+          if (mounted) setUser(null);
         }
 
         if (mounted) setLoading(false);
@@ -136,22 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         unsubscribe();
       };
     } else {
-      // Fallback local mode
-      const localStored = localStorage.getItem(LOCAL_SESSION_KEY);
-      if (localStored) {
-        try {
-          const parsed = JSON.parse(localStored);
-          setUser(parsed);
-        } catch {
-          setUser(DEV_DEFAULT_USER);
-        }
-      } else {
-        setUser(DEV_DEFAULT_USER);
+      if (mounted) {
+        setUser(null);
+        setLoading(false);
       }
-      setLoading(false);
-      return () => {
-        mounted = false;
-      };
     }
   }, [isConfigured]);
 
@@ -173,7 +130,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (params.password.length < 6) throw new Error('Password must be at least 6 characters long.');
     if (params.password !== params.confirmPassword) throw new Error('Passwords do not match.');
 
-    if (isConfigured && auth) {
+    if (!isConfigured || !auth) {
+      throw new Error('Firebase configuration is not initialized. Please verify firebase-applet-config.json.');
+    }
+
+    try {
       const userCred = await createUserWithEmailAndPassword(auth, cleanEmail, params.password);
       if (userCred.user) {
         // Update display name in Firebase Auth
@@ -191,20 +152,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         setUser(prof);
       }
-      return;
+    } catch (err: unknown) {
+      throw new Error(formatFirebaseAuthError(err));
     }
-
-    // Local fallback
-    const userId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const newProf = await createOrUpdateProfile({
-      id: userId,
-      full_name: cleanName,
-      email: cleanEmail,
-      phone: cleanPhone,
-      avatar_url: null,
-    });
-    localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(newProf));
-    setUser(newProf);
   };
 
   const login = async (email: string, password: string) => {
@@ -212,7 +162,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!cleanEmail) throw new Error('Email is required.');
     if (!password) throw new Error('Password is required.');
 
-    if (isConfigured && auth) {
+    if (!isConfigured || !auth) {
+      throw new Error('Firebase configuration is not initialized. Please verify firebase-applet-config.json.');
+    }
+
+    try {
       const userCred = await signInWithEmailAndPassword(auth, cleanEmail, password);
       if (userCred.user) {
         const prof = await getProfile(userCred.user.uid);
@@ -228,66 +182,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(newProf);
         }
       }
-      return;
-    }
-
-    // Local fallback
-    const profiles = JSON.parse(localStorage.getItem('rupxa_profiles_v1') || '[]') as Profile[];
-    const matched = profiles.find((p) => p.email.toLowerCase() === cleanEmail);
-    if (!matched) {
-      throw new Error('Invalid email or password. Please check your credentials or create a new account.');
-    }
-    localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(matched));
-    setUser(matched);
-  };
-
-  const loginWithGoogle = async () => {
-    if (!isConfigured || !auth) {
-      throw new Error('Firebase Auth is not configured.');
-    }
-
-    try {
-      const res = await signInWithPopup(auth, googleProvider);
-      if (res.user) {
-        const existing = await getProfile(res.user.uid);
-        if (existing) {
-          setUser(existing);
-        } else {
-          const newProf = await createOrUpdateProfile({
-            id: res.user.uid,
-            full_name: res.user.displayName || 'Google User',
-            email: res.user.email || '',
-            phone: res.user.phoneNumber || '',
-            avatar_url: res.user.photoURL || null,
-          });
-          setUser(newProf);
-        }
-      }
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes('popup-closed-by-user')) {
-        throw new Error('Sign-in cancelled. Please try again.');
-      }
-      throw new Error(`Google Sign-In error: ${errMsg}`);
+      throw new Error(formatFirebaseAuthError(err));
     }
-  };
-
-  const loginAsDemoUser = async () => {
-    await createOrUpdateProfile(DEV_DEFAULT_USER);
-    localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(DEV_DEFAULT_USER));
-    setUser(DEV_DEFAULT_USER);
   };
 
   const resetPassword = async (email: string) => {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) throw new Error('Please enter your registered email address.');
 
-    if (isConfigured && auth) {
-      await sendPasswordResetEmail(auth, cleanEmail);
-      return;
+    if (!isConfigured || !auth) {
+      throw new Error('Firebase configuration is not initialized.');
     }
 
-    throw new Error('Password reset is available when Firebase is configured.');
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+    } catch (err: unknown) {
+      throw new Error(formatFirebaseAuthError(err));
+    }
   };
 
   const updateProfileData = async (updates: {
@@ -304,7 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Please provide a valid 10-digit phone number.');
     }
 
-    if (auth.currentUser && updates.fullName) {
+    if (auth?.currentUser && updates.fullName) {
       await updateFirebaseProfile(auth.currentUser, {
         displayName: cleanName,
       });
@@ -318,9 +230,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     setUser(updated);
-    if (!auth.currentUser) {
-      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(updated));
-    }
   };
 
   const updateProfile = async (updates: {
@@ -338,7 +247,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    localStorage.removeItem(LOCAL_SESSION_KEY);
     if (isConfigured && auth) {
       await signOut(auth);
     }
@@ -355,8 +263,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isConfigured,
         signup,
         login,
-        loginWithGoogle,
-        loginAsDemoUser,
         resetPassword,
         updateProfileData,
         updateProfile,

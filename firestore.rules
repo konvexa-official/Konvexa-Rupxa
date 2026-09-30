@@ -31,6 +31,14 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.user_id == request.auth.uid;
     }
 
+    // Category Budgets: strictly private to the authenticated owner
+    match /budgets/{budgetId} {
+      allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.user_id == request.auth.uid && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.user_id == request.auth.uid;
+    }
+
     // Split Groups: accessible to authenticated users participating in shared finances
     match /split_groups/{groupId} {
       allow read: if isSignedIn();

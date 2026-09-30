@@ -1,18 +1,39 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    --bg-offwhite: #FAF8F5;
+    --text-black: #000000;
+    --gold-primary: #D4AF37;
+    --gold-deep: #C59B27;
+    --gold-light: #F7E7B4;
+    --gold-border: rgba(212, 175, 55, 0.4);
+  }
+
+  html {
+    background-color: #FAF8F5;
+    color: #000000;
+  }
+
+  body {
+    background-color: #FAF8F5;
+    color: #000000;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  .light {
+    color-scheme: light;
+    color: #000000;
+  }
+
   .dark {
     color-scheme: dark;
     color: #ffffff;
   }
 
-  .light {
-    color-scheme: light;
-    color: #0b0b0b;
-  }
-
   body.dark,
   .dark body {
+    background-color: #0B0B0B;
     color: #ffffff;
   }
 }

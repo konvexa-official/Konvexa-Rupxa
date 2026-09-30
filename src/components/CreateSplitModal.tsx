@@ -4,7 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import { PublicUserSearchResult, Profile, SplitGroup } from '../types';
 import { searchUserByContact, createSplitGroup } from '../lib/db';
 import { parseMoney, formatCurrency } from '../lib/formatters';
-import { X, Search, Plus, Trash2, Check, AlertCircle, Users, CheckCircle2 } from 'lucide-react';
+import { X, Search, Plus, Trash2, Check, AlertCircle, Users } from 'lucide-react';
 
 interface CreateSplitModalProps {
   isOpen: boolean;
@@ -98,40 +98,54 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
 
     try {
       const result = await searchUserByContact(searchQuery, user.id);
-      setSearchResult(result);
-    } catch (err) {
-      console.error('Error searching user:', err);
+      if (result) {
+        // Check if already in group
+        const exists = members.some((m) => m.userId === result.id);
+        if (exists) {
+          setError('User is already added to this split group.');
+          setSearchResult(null);
+        } else {
+          setSearchResult(result);
+        }
+      } else {
+        setSearchResult(null);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Failed to search user.');
+      }
     } finally {
       setSearching(false);
     }
   };
 
-  // Add searched member
-  const handleAddMember = (result: PublicUserSearchResult) => {
-    if (members.some((m) => m.userId === result.id)) {
-      setError('User is already added to this split.');
-      return;
-    }
-
+  const handleAddMember = (foundUser: PublicUserSearchResult) => {
     const newMember: MemberInput = {
-      userId: result.id,
-      name: result.full_name,
-      maskedIdentifier: result.masked_identifier,
+      userId: foundUser.id,
+      name: foundUser.full_name,
+      maskedIdentifier: foundUser.masked_identifier,
       amount: 0,
       isCreator: false,
     };
 
     const nextMembers = [...members, newMember];
     setMembers(nextMembers);
-    setCustomAmounts((prev) => ({ ...prev, [result.id]: '0' }));
+    setCustomAmounts((prev) => ({ ...prev, [foundUser.id]: '0' }));
+
+    // Clear search
     setSearchQuery('');
     setSearchResult(null);
     setSearchAttempted(false);
+    setError(null);
   };
 
   const handleRemoveMember = (userId: string) => {
+    if (userId === user.id) return; // Cannot remove creator
     const nextMembers = members.filter((m) => m.userId !== userId);
     setMembers(nextMembers);
+
     const nextCustom = { ...customAmounts };
     delete nextCustom[userId];
     setCustomAmounts(nextCustom);
@@ -145,48 +159,49 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
     );
   };
 
-  // Compute assigned and remaining
-  const numTotal = parseMoney(totalAmount);
   const assignedTotal = members.reduce((sum, m) => sum + m.amount, 0);
-  const remainingTotal = parseMoney(numTotal - assignedTotal);
+  const remainingTotal = parseMoney(parseMoney(totalAmount) - assignedTotal);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
+    const safeTotal = parseMoney(totalAmount);
     if (!name.trim()) {
-      setError('Split group name is required.');
+      setError('Please provide a name for this split.');
       return;
     }
-    if (numTotal < 0) {
-      setError('Total amount cannot be negative.');
+    if (safeTotal <= 0) {
+      setError('Total amount must be greater than zero.');
       return;
     }
-    if (members.length === 0) {
-      setError('At least one member is required.');
+    if (members.length < 2) {
+      setError('A split group must have at least 2 members. Search & add a member.');
       return;
     }
 
-    // Custom split validation: If total > 0, Assigned must equal Total
-    if (numTotal > 0 && splitMode === 'custom' && Math.abs(remainingTotal) > 0.01) {
-      setError(
-        `Assigned amount (${formatCurrency(assignedTotal)}) must equal the group total (${formatCurrency(numTotal)}). Remaining: ${formatCurrency(remainingTotal)}.`
-      );
-      return;
+    if (splitMode === 'custom') {
+      if (Math.abs(remainingTotal) > 0.05) {
+        setError(
+          `Custom split does not equal total amount. Difference: ${formatCurrency(
+            Math.abs(remainingTotal)
+          )}`
+        );
+        return;
+      }
     }
 
     setLoading(true);
     try {
       const created = await createSplitGroup({
         name: name.trim(),
-        totalAmount: numTotal,
+        totalAmount: safeTotal,
         currency: 'INR',
         creatorId: user.id,
         creatorProfile: user,
         members: members.map((m) => ({
           userId: m.userId,
           amount: m.amount,
-          profile: m.profile,
         })),
       });
 
@@ -196,7 +211,7 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Failed to create split group.');
+        setError('Failed to create split group. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -213,19 +228,19 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
         className={`w-full max-w-lg rounded-2xl border p-6 my-8 shadow-2xl transition-all ${
           isDark
             ? 'bg-[#0B0B0B] border-[#2A2926] text-white shadow-black/80'
-            : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] shadow-black/20'
+            : 'bg-white border-[#E6DFC8] text-black shadow-xl'
         }`}
       >
-        <div className="flex items-center justify-between pb-4 border-b border-[#2A2926]">
+        <div className="flex items-center justify-between pb-4 border-b border-[#E6DFC8] dark:border-[#2A2926]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#B08D57]/15 text-[#B08D57] border border-[#6F5738]/30 flex items-center justify-center">
-              <Users className="w-4 h-4" />
+            <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/40 flex items-center justify-center">
+              <Users className="w-4 h-4 text-[#C59B27]" />
             </div>
             <div>
-              <h2 className="text-lg font-bold tracking-tight text-[#0B0B0B] dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+              <h2 className="text-lg font-black tracking-tight text-black dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
                 Create Split Group
               </h2>
-              <p className="text-xs text-[#6F5738] dark:text-[#A6A29A]">Collaborative shared expense</p>
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">Collaborative shared expense</p>
             </div>
           </div>
           <button
@@ -235,7 +250,7 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
             className={`p-1.5 rounded-lg transition-colors ${
               isDark
                 ? 'text-[#A6A29A] hover:text-white hover:bg-[#2A2926]'
-                : 'text-[#6F5738] hover:text-[#0B0B0B] hover:bg-[#2A2926]/20'
+                : 'text-black/60 hover:text-black hover:bg-[#FAF8F5]'
             }`}
           >
             <X className="w-5 h-5" />
@@ -245,9 +260,9 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
         {error && (
           <div
             id="create-split-error"
-            className="mt-4 p-3 rounded-xl border border-[#6F5738]/40 bg-[#6F5738]/20 text-[#0B0B0B] dark:text-white text-xs flex items-center gap-2"
+            className="mt-4 p-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs flex items-center gap-2 font-bold"
           >
-            <AlertCircle className="w-4 h-4 shrink-0 text-[#B08D57]" />
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
             <span>{error}</span>
           </div>
         )}
@@ -255,7 +270,7 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           {/* Split Name */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[#6F5738] dark:text-[#A6A29A]">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
               Split Name
             </label>
             <input
@@ -265,10 +280,10 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
               placeholder="Group name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className={`w-full px-4 py-2.5 rounded-xl text-sm border transition-colors outline-none focus:ring-2 focus:ring-[#B08D57]/20 ${
+              className={`w-full px-4 py-2.5 rounded-xl text-sm font-semibold border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
                 isDark
-                  ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#B08D57]'
-                  : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] placeholder-[#6F5738]/60 focus:border-[#B08D57]'
+                  ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
+                  : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
               }`}
             />
           </div>
@@ -276,11 +291,11 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
           {/* Total Amount & Currency */}
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[#6F5738] dark:text-[#A6A29A]">
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
                 Total Amount (₹)
               </label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-[#B08D57]">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-[#8C6B1F] dark:text-[#E6CA65]">
                   ₹
                 </span>
                 <input
@@ -291,25 +306,25 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                   placeholder="0.00"
                   value={totalAmount}
                   onChange={(e) => setTotalAmount(e.target.value)}
-                  className={`w-full pl-8 pr-4 py-2.5 rounded-xl text-sm font-semibold font-mono border transition-colors outline-none focus:ring-2 focus:ring-[#B08D57]/20 ${
+                  className={`w-full pl-8 pr-4 py-2.5 rounded-xl text-sm font-black font-mono border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
                     isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#B08D57]'
-                      : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] focus:border-[#B08D57]'
+                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37]'
                   }`}
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[#6F5738] dark:text-[#A6A29A]">
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
                 Currency
               </label>
               <input
                 type="text"
                 readOnly
                 value="INR (₹)"
-                className={`w-full px-3 py-2.5 rounded-xl text-xs font-semibold border text-center ${
-                  isDark ? 'bg-[#2A2926] border-[#2A2926] text-white' : 'bg-[#2A2926]/10 border-[#2A2926] text-[#0B0B0B]'
+                className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold border text-center ${
+                  isDark ? 'bg-[#2A2926] border-[#2A2926] text-white' : 'bg-[#FAF8F5] border-[#E6DFC8] text-black'
                 }`}
               />
             </div>
@@ -317,22 +332,22 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
 
           {/* Split Type Selector */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[#6F5738] dark:text-[#A6A29A]">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
               Split Mode
             </label>
             <div className={`grid grid-cols-2 p-1 rounded-xl border ${
-              isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#2A2926]/10 border-[#2A2926]'
+              isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
             }`}>
               <button
                 id="split-mode-equal-btn"
                 type="button"
                 onClick={() => setSplitMode('equal')}
-                className={`py-2 text-xs font-semibold rounded-lg transition-all ${
+                className={`py-2 text-xs font-bold rounded-lg transition-all ${
                   splitMode === 'equal'
-                    ? 'bg-[#B08D57] text-[#0B0B0B] shadow-sm'
+                    ? 'bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black shadow-xs'
                     : isDark
                     ? 'text-[#A6A29A] hover:text-white'
-                    : 'text-[#6F5738] hover:text-[#0B0B0B]'
+                    : 'text-black/70 hover:text-black'
                 }`}
               >
                 Equal Split
@@ -341,12 +356,12 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                 id="split-mode-custom-btn"
                 type="button"
                 onClick={() => setSplitMode('custom')}
-                className={`py-2 text-xs font-semibold rounded-lg transition-all ${
+                className={`py-2 text-xs font-bold rounded-lg transition-all ${
                   splitMode === 'custom'
-                    ? 'bg-[#B08D57] text-[#0B0B0B] shadow-sm'
+                    ? 'bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black shadow-xs'
                     : isDark
                     ? 'text-[#A6A29A] hover:text-white'
-                    : 'text-[#6F5738] hover:text-[#0B0B0B]'
+                    : 'text-black/70 hover:text-black'
                 }`}
               >
                 Custom Split
@@ -356,12 +371,12 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
 
           {/* Member Search Box */}
           <div className="pt-2">
-            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[#6F5738] dark:text-[#A6A29A]">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
               Add Members (Search by Email or Phone)
             </label>
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#A6A29A]" />
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#C59B27]" />
                 <input
                   id="search-user-input"
                   type="text"
@@ -378,10 +393,10 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                       handleSearch();
                     }
                   }}
-                  className={`w-full pl-10 pr-4 py-2 rounded-xl text-xs border transition-colors outline-none focus:ring-2 focus:ring-[#B08D57]/20 ${
+                  className={`w-full pl-10 pr-4 py-2 rounded-xl text-xs font-semibold border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
                     isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#B08D57]'
-                      : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] placeholder-[#6F5738]/60 focus:border-[#B08D57]'
+                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
                   }`}
                 />
               </div>
@@ -390,7 +405,7 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                 type="button"
                 onClick={handleSearch}
                 disabled={searching || !searchQuery.trim()}
-                className="px-4 py-2 rounded-xl text-xs font-semibold border border-[#2A2926] bg-[#2A2926] text-white hover:bg-[#6F5738]/40 transition-colors disabled:opacity-50"
+                className="px-4 py-2 rounded-xl text-xs font-bold border border-black bg-black text-white hover:bg-black/85 transition-colors disabled:opacity-50"
               >
                 {searching ? 'Searching...' : 'Search'}
               </button>
@@ -401,16 +416,16 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
               <div
                 id="search-user-result-card"
                 className={`mt-2 p-3 rounded-xl border flex items-center justify-between gap-3 ${
-                  isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926]'
+                  isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-[#B08D57]/15 text-[#B08D57] border border-[#6F5738]/30 flex items-center justify-center font-bold text-xs">
+                  <div className="w-8 h-8 rounded-full bg-[#D4AF37]/20 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/40 flex items-center justify-center font-bold text-xs">
                     {searchResult.full_name[0]?.toUpperCase()}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate text-[#0B0B0B] dark:text-white">{searchResult.full_name}</p>
-                    <p className="text-[11px] text-[#6F5738] dark:text-[#A6A29A] truncate">{searchResult.masked_identifier}</p>
+                    <p className="text-xs font-bold truncate text-black dark:text-white">{searchResult.full_name}</p>
+                    <p className="text-[11px] text-[#292524] dark:text-[#A6A29A] truncate font-medium">{searchResult.masked_identifier}</p>
                   </div>
                 </div>
 
@@ -418,16 +433,16 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                   id="add-searched-member-btn"
                   type="button"
                   onClick={() => handleAddMember(searchResult)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] flex items-center gap-1 shadow-sm transition-all"
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 flex items-center gap-1 shadow-xs transition-all border border-[#B38A22]/40"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
                   <span>Add</span>
                 </button>
               </div>
             )}
 
             {searchAttempted && !searching && !searchResult && (
-              <p id="no-user-found-msg" className="text-xs text-[#6F5738] dark:text-[#A6A29A] mt-2 px-1">
+              <p id="no-user-found-msg" className="text-xs text-[#292524] dark:text-[#A6A29A] mt-2 px-1 font-medium">
                 No Konvexa Rupxa user found.
               </p>
             )}
@@ -436,15 +451,15 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
           {/* Members List */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-[#6F5738] dark:text-[#A6A29A]">
+              <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-[#A6A29A]">
                 Members ({members.length})
               </label>
               {splitMode === 'custom' && (
                 <div className="text-xs font-mono">
-                  <span className="text-[#6F5738] dark:text-[#A6A29A]">Assigned: </span>
-                  <span className="font-bold text-[#0B0B0B] dark:text-white">{formatCurrency(assignedTotal)}</span>
-                  <span className="text-[#6F5738] dark:text-[#A6A29A] ml-2">Remaining: </span>
-                  <span className={`font-bold ${Math.abs(remainingTotal) < 0.01 ? 'text-[#B08D57]' : 'text-[#6F5738]'}`}>
+                  <span className="text-[#292524] dark:text-[#A6A29A] font-bold">Assigned: </span>
+                  <span className="font-bold text-black dark:text-white">{formatCurrency(assignedTotal)}</span>
+                  <span className="text-[#292524] dark:text-[#A6A29A] ml-2 font-bold">Remaining: </span>
+                  <span className={`font-black ${Math.abs(remainingTotal) < 0.01 ? 'text-[#8C6B1F] dark:text-[#E6CA65]' : 'text-rose-600'}`}>
                     {formatCurrency(remainingTotal)}
                   </span>
                 </div>
@@ -457,23 +472,23 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                   key={member.userId}
                   id={`member-row-${member.userId}`}
                   className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
-                    isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926]'
+                    isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-7 h-7 rounded-full bg-[#2A2926] text-white border border-[#6F5738]/30 flex items-center justify-center text-xs font-semibold shrink-0">
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black border border-[#D4AF37]/50 flex items-center justify-center text-xs font-bold shrink-0">
                       {member.name[0]?.toUpperCase()}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold truncate text-[#0B0B0B] dark:text-white">{member.name}</span>
+                        <span className="text-xs font-bold truncate text-black dark:text-white">{member.name}</span>
                         {member.isCreator && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#B08D57]/15 text-[#B08D57] border border-[#6F5738]/30 font-medium">
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#D4AF37]/20 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/40 font-bold">
                             Creator
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] text-[#6F5738] dark:text-[#A6A29A] block truncate">
+                      <span className="text-[10px] text-[#292524] dark:text-[#A6A29A] block truncate font-medium">
                         {member.maskedIdentifier}
                       </span>
                     </div>
@@ -481,12 +496,12 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
 
                   <div className="flex items-center gap-2 shrink-0">
                     {splitMode === 'equal' ? (
-                      <span className="text-xs font-mono font-bold text-[#0B0B0B] dark:text-white">
+                      <span className="text-xs font-mono font-black text-black dark:text-white">
                         {formatCurrency(member.amount)}
                       </span>
                     ) : (
                       <div className="relative w-28">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-[#B08D57]">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-black text-[#8C6B1F] dark:text-[#E6CA65]">
                           ₹
                         </span>
                         <input
@@ -496,10 +511,10 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                           min="0"
                           value={customAmounts[member.userId] ?? member.amount.toString()}
                           onChange={(e) => handleCustomAmountChange(member.userId, e.target.value)}
-                          className={`w-full pl-5 pr-2 py-1 rounded-lg text-xs font-mono font-semibold border text-right outline-none focus:ring-1 focus:ring-[#B08D57] ${
+                          className={`w-full pl-5 pr-2 py-1 rounded-lg text-xs font-mono font-bold border text-right outline-none focus:ring-1 focus:ring-[#D4AF37] ${
                             isDark
                               ? 'bg-[#0B0B0B] border-[#2A2926] text-white'
-                              : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B]'
+                              : 'bg-white border-[#E6DFC8] text-black'
                           }`}
                         />
                       </div>
@@ -512,7 +527,7 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
                         className={`p-1 rounded transition-colors ${
                           isDark
                             ? 'text-[#A6A29A] hover:text-white hover:bg-[#6F5738]/30'
-                            : 'text-[#6F5738] hover:text-[#0B0B0B] hover:bg-[#2A2926]/20'
+                            : 'text-black/60 hover:text-rose-600 hover:bg-rose-50'
                         }`}
                         title="Remove member"
                       >
@@ -526,16 +541,16 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#2A2926]">
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E6DFC8] dark:border-[#2A2926]">
             <button
               id="cancel-create-split-btn"
               type="button"
               onClick={onClose}
               disabled={loading}
-              className={`px-4 py-2.5 rounded-xl text-xs font-semibold border transition-colors ${
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors ${
                 isDark
                   ? 'border-[#2A2926] hover:bg-[#2A2926] text-[#A6A29A]'
-                  : 'border-[#2A2926] hover:bg-[#2A2926]/10 text-[#6F5738]'
+                  : 'border-[#E6DFC8] hover:bg-[#FAF8F5] text-black'
               }`}
             >
               Cancel
@@ -544,13 +559,13 @@ export const CreateSplitModal: React.FC<CreateSplitModalProps> = ({
               id="submit-create-split-btn"
               type="submit"
               disabled={loading}
-              className="px-5 py-2.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50 border border-[#B38A22]/40"
             >
               {loading ? (
-                <div className="w-4 h-4 border-2 border-[#0B0B0B]/30 border-t-[#0B0B0B] rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
               ) : (
                 <>
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 stroke-[3]" />
                   <span>Create Shared Split</span>
                 </>
               )}

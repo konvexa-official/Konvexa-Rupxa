@@ -95,6 +95,21 @@
         "created_at": { "type": "string" }
       },
       "required": ["id", "group_id", "user_id", "action"]
+    },
+    "CategoryBudget": {
+      "title": "CategoryBudget",
+      "description": "Monthly budget limit target defined for a spending category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "category": { "type": "string" },
+        "limit_amount": { "type": "number" },
+        "period": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "user_id", "category", "limit_amount"]
     }
   },
   "firestore": {
@@ -105,6 +120,10 @@
     "/expenses/{expenseId}": {
       "schema": { "$ref": "#/entities/Expense" },
       "description": "Personal expenses recorded by individual users"
+    },
+    "/budgets/{budgetId}": {
+      "schema": { "$ref": "#/entities/CategoryBudget" },
+      "description": "Monthly budget targets per category for users"
     },
     "/split_groups/{groupId}": {
       "schema": { "$ref": "#/entities/SplitGroup" },

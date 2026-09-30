@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { SplitGroup, Profile } from '../types';
+import { SplitGroup } from '../types';
 import { getSplitGroupDetails, addMemberToSplitGroup } from '../lib/db';
 import { formatCurrency } from '../lib/formatters';
-import { Users, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { Users, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface JoinSplitInviteModalProps {
   groupId: string;
@@ -85,60 +85,60 @@ export const JoinSplitInviteModal: React.FC<JoinSplitInviteModalProps> = ({
         className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl text-center transition-all ${
           isDark
             ? 'bg-[#0B0B0B] border-[#2A2926] text-white shadow-black/80'
-            : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B] shadow-black/20'
+            : 'bg-white border-[#E6DFC8] text-black shadow-xl'
         }`}
       >
-        <div className="w-14 h-14 rounded-2xl bg-[#B08D57]/15 text-[#B08D57] flex items-center justify-center mx-auto mb-4 border border-[#6F5738]/30">
+        <div className="w-14 h-14 rounded-2xl bg-[#D4AF37]/15 text-[#C59B27] flex items-center justify-center mx-auto mb-4 border border-[#D4AF37]/40">
           <Users className="w-7 h-7" />
         </div>
 
         {loading ? (
           <div className="py-6 space-y-3">
-            <div className="h-6 w-48 bg-[#2A2926] rounded-lg mx-auto animate-pulse" />
-            <div className="h-4 w-32 bg-[#2A2926]/60 rounded-lg mx-auto animate-pulse" />
+            <div className="h-6 w-48 bg-[#E6DFC8]/50 rounded-lg mx-auto animate-pulse" />
+            <div className="h-4 w-32 bg-[#E6DFC8]/40 rounded-lg mx-auto animate-pulse" />
           </div>
         ) : error ? (
           <div className="py-4">
-            <div className="p-3 rounded-xl border border-[#6F5738]/40 bg-[#6F5738]/20 text-[#0B0B0B] dark:text-white text-xs flex items-center justify-center gap-2 mb-4">
-              <AlertCircle className="w-4 h-4 shrink-0 text-[#B08D57]" />
+            <div className="p-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs flex items-center justify-center gap-2 mb-4 font-bold">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
               <span>{error}</span>
             </div>
             <button
               onClick={onDismiss}
-              className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#2A2926] text-white hover:bg-[#6F5738]/40 border border-[#2A2926]"
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-[#FAF8F5] text-black hover:border-[#D4AF37] border border-[#E6DFC8]"
             >
               Close
             </button>
           </div>
         ) : group ? (
           <div>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#B08D57] block mb-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#8C6B1F] dark:text-[#E6CA65] block mb-1">
               Group Invitation
             </span>
             <h2
-              className="text-xl font-bold tracking-tight mb-1 text-[#0B0B0B] dark:text-white"
+              className="text-xl font-black tracking-tight mb-1 text-black dark:text-white"
               style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
-              You've been invited to join {group.name}
+              You&apos;ve been invited to join {group.name}
             </h2>
-            <p className="text-xs text-[#6F5738] dark:text-[#A6A29A] mb-6">
-              Created by <span className="font-semibold text-[#0B0B0B] dark:text-white">{creatorName}</span>
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] mb-6 font-medium">
+              Created by <span className="font-bold text-black dark:text-white">{creatorName}</span>
             </p>
 
             <div
               className={`p-4 rounded-xl border mb-6 text-left ${
-                isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#F5F2EA] border-[#2A2926]'
+                isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
               }`}
             >
               <div className="flex justify-between items-center text-xs">
-                <span className="text-[#6F5738] dark:text-[#A6A29A]">Total Group Amount:</span>
-                <span className="font-bold font-mono text-base text-[#B08D57]">
+                <span className="text-[#292524] dark:text-[#A6A29A] font-bold">Total Group Amount:</span>
+                <span className="font-black font-mono text-base text-[#8C6B1F] dark:text-[#E6CA65]">
                   {formatCurrency(group.total_amount)}
                 </span>
               </div>
-              <div className="flex justify-between items-center text-xs mt-2 pt-2 border-t border-[#2A2926]">
-                <span className="text-[#6F5738] dark:text-[#A6A29A]">Currency:</span>
-                <span className="font-medium text-[#0B0B0B] dark:text-white">INR (₹)</span>
+              <div className="flex justify-between items-center text-xs mt-2 pt-2 border-t border-[#E6DFC8] dark:border-[#2A2926]">
+                <span className="text-[#292524] dark:text-[#A6A29A] font-bold">Currency:</span>
+                <span className="font-bold text-black dark:text-white">INR (₹)</span>
               </div>
             </div>
 
@@ -147,10 +147,10 @@ export const JoinSplitInviteModal: React.FC<JoinSplitInviteModalProps> = ({
                 type="button"
                 onClick={onDismiss}
                 disabled={joining}
-                className={`px-4 py-2.5 rounded-xl text-xs font-semibold border transition-colors ${
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors ${
                   isDark
                     ? 'border-[#2A2926] hover:bg-[#2A2926] text-[#A6A29A]'
-                    : 'border-[#2A2926] hover:bg-[#2A2926]/10 text-[#6F5738]'
+                    : 'border-[#E6DFC8] hover:bg-[#FAF8F5] text-black'
                 }`}
               >
                 Decline
@@ -160,13 +160,13 @@ export const JoinSplitInviteModal: React.FC<JoinSplitInviteModalProps> = ({
                 type="button"
                 onClick={handleJoin}
                 disabled={joining}
-                className="px-6 py-2.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] shadow-sm flex items-center gap-2 transition-all disabled:opacity-50"
+                className="px-6 py-2.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 shadow-sm flex items-center gap-2 transition-all disabled:opacity-50 border border-[#B38A22]/40"
               >
                 {joining ? (
-                  <div className="w-4 h-4 border-2 border-[#0B0B0B]/30 border-t-[#0B0B0B] rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
                 ) : (
                   <>
-                    <CheckCircle2 className="w-4 h-4" />
+                    <CheckCircle2 className="w-4 h-4 stroke-[3]" />
                     <span>Join Group</span>
                   </>
                 )}

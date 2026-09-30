@@ -10,7 +10,9 @@ import { Splitter } from './components/Splitter';
 import { Settings } from './components/Settings';
 import { ExpenseModal } from './components/ExpenseModal';
 import { JoinSplitInviteModal } from './components/JoinSplitInviteModal';
-import { getUserExpenses, getUserSplitGroups } from './lib/db';
+import { BudgetSettingsModal } from './components/BudgetSettingsModal';
+import { getUserExpenses, getUserSplitGroups, getCategoryBudgets } from './lib/db';
+import { computeMonthlyBudgetStatuses } from './lib/budgetHelpers';
 import { Expense, SplitGroupSummary, ActiveTab } from './types';
 
 function MainApp() {
@@ -23,11 +25,15 @@ function MainApp() {
   // Application data
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [splits, setSplits] = useState<SplitGroupSummary[]>([]);
+  const [budgets, setBudgets] = useState<Record<string, number>>({});
   const [dataLoading, setDataLoading] = useState(true);
 
   // Expense Modal State
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Budget Settings Modal State
+  const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
 
   // Deep-link join split parameter handling (?join_split=grp_123)
   const [pendingJoinGroupId, setPendingJoinGroupId] = useState<string | null>(null);
@@ -42,17 +48,19 @@ function MainApp() {
     }
   }, []);
 
-  // Fetch real user data
+  // Fetch real user data including expenses, split groups, and category budgets
   const loadData = useCallback(async () => {
     if (!user) return;
     setDataLoading(true);
     try {
-      const [fetchedExpenses, fetchedSplits] = await Promise.all([
+      const [fetchedExpenses, fetchedSplits, fetchedBudgets] = await Promise.all([
         getUserExpenses(user.id),
         getUserSplitGroups(user.id),
+        getCategoryBudgets(user.id),
       ]);
       setExpenses(fetchedExpenses);
       setSplits(fetchedSplits);
+      setBudgets(fetchedBudgets);
     } catch (err) {
       console.error('Failed to load user financial data:', err);
     } finally {
@@ -65,6 +73,10 @@ function MainApp() {
       loadData();
     }
   }, [user, loadData]);
+
+  // Compute live budget status for global alerts
+  const budgetSummary = computeMonthlyBudgetStatuses(expenses, budgets);
+  const exceededBudgetCount = budgetSummary.exceededCategories.length;
 
   // Loading spinner state while checking auth
   if (authLoading) {
@@ -110,11 +122,16 @@ function MainApp() {
     <div
       id="rupxa-app-root"
       className={`min-h-screen flex flex-col transition-colors ${
-        isDark ? 'bg-[#0B0B0B] text-white' : 'bg-[#F5F2EA] text-[#0B0B0B]'
+        isDark ? 'bg-[#0B0B0B] text-white' : 'bg-[#FAF8F5] text-black'
       }`}
     >
       {/* Top Header */}
-      <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        exceededBudgetCount={exceededBudgetCount}
+        onOpenBudgetSettings={() => setIsBudgetModalOpen(true)}
+      />
 
       {/* Main Body with Desktop Sidebar + Tab Content */}
       <div className="flex-1 flex w-full">
@@ -134,6 +151,8 @@ function MainApp() {
               onOpenAddExpense={handleOpenAddExpense}
               onSelectExpense={handleEditExpense}
               setActiveTab={setActiveTab}
+              budgets={budgets}
+              onOpenBudgetSettings={() => setIsBudgetModalOpen(true)}
             />
           )}
 
@@ -144,6 +163,8 @@ function MainApp() {
               onRefresh={loadData}
               onOpenAddExpense={handleOpenAddExpense}
               onEditExpense={handleEditExpense}
+              budgets={budgets}
+              onOpenBudgetSettings={() => setIsBudgetModalOpen(true)}
             />
           )}
 
@@ -172,6 +193,19 @@ function MainApp() {
         }}
         onSaved={handleExpenseSaved}
         editingExpense={editingExpense}
+        budgets={budgets}
+        expenses={expenses}
+      />
+
+      {/* Monthly Budget Settings Modal */}
+      <BudgetSettingsModal
+        isOpen={isBudgetModalOpen}
+        onClose={() => setIsBudgetModalOpen(false)}
+        currentBudgets={budgets}
+        expenses={expenses}
+        onBudgetsSaved={(newB) => {
+          setBudgets(newB);
+        }}
       />
 
       {/* Deep-link Split Invite Acceptance Dialog */}

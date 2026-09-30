@@ -6,14 +6,10 @@ import { addGroupExpense, updateGroupExpense } from '../lib/db';
 import { parseMoney, formatCurrency } from '../lib/formatters';
 import {
   X,
-  Plus,
   Check,
   AlertCircle,
-  Users,
   Receipt,
-  Tag,
   CreditCard,
-  Sliders,
   DollarSign,
   CheckSquare,
   Square,
@@ -73,7 +69,6 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
       setName(editingExpense.name);
       setAmount(editingExpense.amount.toString());
 
-      // Check if category is predefined or custom
       const isPredefined = PREDEFINED_CATEGORIES.includes(
         editingExpense.category as (typeof PREDEFINED_CATEGORIES)[number]
       );
@@ -101,139 +96,104 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
       setAmount('');
       setCategorySelect('Food');
       setCustomCategory('');
-
-      // Default paid by: current user if they are in members, else first member
-      if (user && memberIds.includes(user.id)) {
-        setPaidByUserId(user.id);
-      } else if (members.length > 0) {
-        setPaidByUserId(members[0].user_id);
-      }
-
-      // Default split between: all members selected
-      setSelectedMemberIds([...memberIds]);
+      setPaidByUserId(user?.id || (members[0]?.user_id ?? ''));
+      setSelectedMemberIds(memberIds);
       setSplitType('equal');
-
-      // Initialize empty custom shares
-      const initialShares: Record<string, string> = {};
-      memberIds.forEach((id) => {
-        initialShares[id] = '0';
-      });
-      setCustomShares(initialShares);
+      setCustomShares({});
     }
   }, [isOpen, editingExpense, members, user]);
 
-  if (!isOpen || !user) return null;
+  if (!isOpen) return null;
+
+  // Toggle member selection in equal split
+  const toggleMember = (memberId: string) => {
+    if (selectedMemberIds.includes(memberId)) {
+      if (selectedMemberIds.length === 1) return; // Prevent 0 members
+      setSelectedMemberIds(selectedMemberIds.filter((id) => id !== memberId));
+    } else {
+      setSelectedMemberIds([...selectedMemberIds, memberId]);
+    }
+  };
+
+  // Toggle select all
+  const toggleSelectAll = () => {
+    if (selectedMemberIds.length === members.length) {
+      if (user) {
+        setSelectedMemberIds([user.id]);
+      } else if (members.length > 0) {
+        setSelectedMemberIds([members[0].user_id]);
+      }
+    } else {
+      setSelectedMemberIds(members.map((m) => m.user_id));
+    }
+  };
 
   const parsedAmount = parseMoney(amount);
 
-  // Handle select all / deselect all
-  const handleSelectAll = () => {
-    setSelectedMemberIds(members.map((m) => m.user_id));
-  };
+  // Equal split share calculation
+  const equalSharePerPerson =
+    selectedMemberIds.length > 0 && parsedAmount > 0
+      ? Math.round((parsedAmount / selectedMemberIds.length) * 100) / 100
+      : 0;
 
-  const handleDeselectAll = () => {
-    setSelectedMemberIds([]);
-  };
-
-  const handleToggleMember = (userId: string) => {
-    setSelectedMemberIds((prev) => {
-      if (prev.includes(userId)) {
-        return prev.filter((id) => id !== userId);
-      } else {
-        return [...prev, userId];
-      }
-    });
-  };
-
-  // Calculate equal share info
-  const calculateEqualShares = () => {
-    if (selectedMemberIds.length === 0 || parsedAmount <= 0) return [];
-    const count = selectedMemberIds.length;
-    const perPerson = Math.floor((parsedAmount / count) * 100) / 100;
-    const remainder = parseMoney(parsedAmount - perPerson * count);
-
-    return selectedMemberIds.map((userId, idx) => ({
-      userId,
-      amount: idx === 0 ? parseMoney(perPerson + remainder) : perPerson,
-    }));
-  };
-
-  // Calculate custom shares sum
-  const customSharesSum = selectedMemberIds.reduce((sum, userId) => {
-    return parseMoney(sum + parseMoney(customShares[userId] || '0'));
+  // Custom shares calculation
+  const customSharesSum = selectedMemberIds.reduce((sum, memId) => {
+    const val = parseMoney(customShares[memId] || '0');
+    return sum + val;
   }, 0);
 
-  const customDifference = parseMoney(parsedAmount - customSharesSum);
+  const customDifference = Math.round((parsedAmount - customSharesSum) * 100) / 100;
   const isCustomBalanced = Math.abs(customDifference) <= 0.05;
 
-  // Auto-distribute equally into custom share fields
-  const handleAutoDistributeCustom = () => {
-    if (selectedMemberIds.length === 0 || parsedAmount <= 0) return;
-    const equalList = calculateEqualShares();
-    const updated: Record<string, string> = { ...customShares };
-    equalList.forEach((item) => {
-      updated[item.userId] = item.amount.toFixed(2);
-    });
-    setCustomShares(updated);
-  };
-
+  // Form submit
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
+    if (!user) return;
 
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError('Please enter an expense name.');
+      setError('Please provide an expense title.');
       return;
     }
 
     if (parsedAmount <= 0) {
-      setError('Please enter a valid expense amount greater than ₹0.');
+      setError('Please enter a valid expense amount greater than 0.');
       return;
     }
 
-    // Determine final category string
-    let finalCategory = categorySelect;
-    if (categorySelect === 'Other') {
-      const trimmedCustom = customCategory.trim();
-      if (!trimmedCustom) {
-        setError('Please enter a custom category name for "Other".');
-        return;
-      }
-      finalCategory = trimmedCustom;
-    }
-
-    if (!paidByUserId) {
-      setError('Please select who paid for this expense.');
-      return;
-    }
+    const finalCategory =
+      categorySelect === 'Other' ? customCategory.trim() || 'Other' : categorySelect;
 
     if (selectedMemberIds.length === 0) {
-      setError('Please select at least one member to split between.');
+      setError('Select at least one member to split this expense with.');
       return;
     }
 
-    // Prepare shares
-    let computedShares: Array<{ userId: string; amount: number }> = [];
-
-    if (splitType === 'equal') {
-      computedShares = calculateEqualShares();
-    } else {
-      if (!isCustomBalanced) {
-        setError(
-          `Sum of all member shares (₹${customSharesSum.toFixed(2)}) must equal the total expense amount (₹${parsedAmount.toFixed(2)}). Difference: ₹${Math.abs(customDifference).toFixed(2)}`
-        );
-        return;
-      }
-      computedShares = selectedMemberIds.map((userId) => ({
-        userId,
-        amount: parseMoney(customShares[userId] || '0'),
-      }));
+    if (splitType === 'custom' && !isCustomBalanced) {
+      setError(
+        `The sum of member shares (₹${customSharesSum.toFixed(
+          2
+        )}) must match the total expense amount (₹${parsedAmount.toFixed(2)}).`
+      );
+      return;
     }
 
     setLoading(true);
+    setError(null);
 
     try {
+      const computedShares = selectedMemberIds.map((mId) => {
+        const shareAmount =
+          splitType === 'equal'
+            ? equalSharePerPerson
+            : parseMoney(customShares[mId] || '0');
+
+        return {
+          userId: mId,
+          amount: shareAmount,
+        };
+      });
+
       if (editingExpense) {
         await updateGroupExpense({
           expenseId: editingExpense.id,
@@ -285,25 +245,25 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
         className={`w-full max-w-lg my-8 rounded-2xl border shadow-2xl transition-all ${
           isDark
             ? 'bg-[#0B0B0B] border-[#2A2926] text-white'
-            : 'bg-[#F5F2EA] border-[#2A2926] text-[#0B0B0B]'
+            : 'bg-white border-[#E6DFC8] text-black shadow-xl'
         }`}
         role="dialog"
         aria-modal="true"
       >
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-5 sm:p-6 border-b border-[#2A2926]">
+        <div className="flex items-center justify-between p-5 sm:p-6 border-b border-[#E6DFC8] dark:border-[#2A2926]">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#B08D57]/15 border border-[#B08D57]/30 flex items-center justify-center text-[#B08D57]">
+            <div className="w-9 h-9 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/40 flex items-center justify-center text-[#C59B27]">
               <Receipt className="w-5 h-5" />
             </div>
             <div>
               <h2
-                className="text-lg sm:text-xl font-bold tracking-tight text-[#0B0B0B] dark:text-white"
+                className="text-lg sm:text-xl font-black tracking-tight text-black dark:text-white"
                 style={{ fontFamily: 'Space Grotesk, sans-serif' }}
               >
                 {editingExpense ? 'Edit Group Expense' : 'Add Group Expense'}
               </h2>
-              <p className="text-xs text-[#6F5738] dark:text-[#A6A29A]">
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
                 Record a shared expense and calculate transparent splits
               </p>
             </div>
@@ -313,7 +273,7 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
             type="button"
             onClick={onClose}
             disabled={loading}
-            className="p-1.5 rounded-lg text-[#6F5738] dark:text-[#A6A29A] hover:bg-[#2A2926]/20 transition-colors"
+            className="p-1.5 rounded-lg text-black/60 dark:text-[#A6A29A] hover:bg-[#FAF8F5] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -322,16 +282,16 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5 max-h-[75vh] overflow-y-auto">
           {error && (
-            <div className="p-3.5 rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="p-3.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs flex items-start gap-2.5 font-bold animate-in fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
               <span>{error}</span>
             </div>
           )}
 
           {/* 1. Expense Name */}
           <div>
-            <label className="block text-xs font-semibold text-[#0B0B0B] dark:text-white mb-1.5">
-              Expense name <span className="text-[#B08D57]">*</span>
+            <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white mb-1.5">
+              Expense name <span className="text-[#C59B27]">*</span>
             </label>
             <div className="relative">
               <input
@@ -341,10 +301,10 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                 placeholder="e.g. Dinner, Taxi, Villa Booking, Groceries"
                 disabled={loading}
                 required
-                className={`w-full px-3.5 py-2.5 rounded-xl text-sm border transition-colors outline-none ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-sm border transition-colors outline-none font-medium ${
                   isDark
-                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#B08D57]'
-                    : 'bg-white border-[#2A2926]/30 text-[#0B0B0B] focus:border-[#B08D57]'
+                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
                 }`}
               />
             </div>
@@ -352,11 +312,11 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
 
           {/* 2. Amount */}
           <div>
-            <label className="block text-xs font-semibold text-[#0B0B0B] dark:text-white mb-1.5">
-              Amount (₹) <span className="text-[#B08D57]">*</span>
+            <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white mb-1.5">
+              Amount (₹) <span className="text-[#C59B27]">*</span>
             </label>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-base font-bold text-[#B08D57]">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-base font-black text-[#8C6B1F] dark:text-[#E6CA65]">
                 ₹
               </div>
               <input
@@ -368,10 +328,10 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                 placeholder="0.00"
                 disabled={loading}
                 required
-                className={`w-full pl-8 pr-3.5 py-2.5 rounded-xl text-base font-mono font-semibold border transition-colors outline-none ${
+                className={`w-full pl-8 pr-3.5 py-2.5 rounded-xl text-base font-mono font-bold border transition-colors outline-none ${
                   isDark
-                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#B08D57]'
-                    : 'bg-white border-[#2A2926]/30 text-[#0B0B0B] focus:border-[#B08D57]'
+                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
                 }`}
               />
             </div>
@@ -379,18 +339,18 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
 
           {/* 3. Category */}
           <div className="space-y-2.5">
-            <label className="block text-xs font-semibold text-[#0B0B0B] dark:text-white">
-              Category <span className="text-[#B08D57]">*</span>
+            <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white">
+              Category <span className="text-[#C59B27]">*</span>
             </label>
             <div className="relative">
               <select
                 value={categorySelect}
                 onChange={(e) => setCategorySelect(e.target.value)}
                 disabled={loading}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-sm border transition-colors outline-none appearance-none pr-9 cursor-pointer ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-colors outline-none appearance-none pr-9 cursor-pointer ${
                   isDark
-                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#B08D57]'
-                    : 'bg-white border-[#2A2926]/30 text-[#0B0B0B] focus:border-[#B08D57]'
+                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
                 }`}
               >
                 {PREDEFINED_CATEGORIES.map((cat) => (
@@ -399,16 +359,15 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                   </option>
                 ))}
               </select>
-              <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-xs text-[#6F5738] dark:text-[#A6A29A]">
+              <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-xs text-[#292524] dark:text-[#A6A29A]">
                 ▼
               </div>
             </div>
 
-            {/* If "Other" is selected, show manual category name input */}
             {categorySelect === 'Other' && (
               <div className="pt-1 animate-in fade-in slide-in-from-top-1">
-                <label className="block text-xs font-semibold text-[#B08D57] mb-1.5">
-                  Enter category name <span className="text-[#B08D57]">*</span>
+                <label className="block text-xs font-bold text-[#8C6B1F] dark:text-[#E6CA65] mb-1.5">
+                  Enter category name <span className="text-[#C59B27]">*</span>
                 </label>
                 <input
                   type="text"
@@ -417,23 +376,20 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                   placeholder="e.g. Beach Activities, Parking, Boat Ride, Medical"
                   disabled={loading}
                   required
-                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm border transition-colors outline-none ${
+                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-medium border transition-colors outline-none ${
                     isDark
-                      ? 'bg-[#151515] border-[#B08D57]/40 text-white focus:border-[#B08D57]'
-                      : 'bg-white border-[#B08D57]/50 text-[#0B0B0B] focus:border-[#B08D57]'
+                      ? 'bg-[#151515] border-[#D4AF37]/40 text-white focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#D4AF37]/50 text-black focus:border-[#D4AF37] focus:bg-white'
                   }`}
                 />
-                <p className="text-[11px] text-[#6F5738] dark:text-[#A6A29A] mt-1">
-                  Specify your custom category (e.g. Parking, Boat Ride, Miscellaneous).
-                </p>
               </div>
             )}
           </div>
 
           {/* 4. Paid By */}
           <div>
-            <label className="block text-xs font-semibold text-[#0B0B0B] dark:text-white mb-1.5">
-              Paid by <span className="text-[#B08D57]">*</span>
+            <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white mb-1.5">
+              Paid by <span className="text-[#C59B27]">*</span>
             </label>
             <div className="relative">
               <select
@@ -441,238 +397,180 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                 onChange={(e) => setPaidByUserId(e.target.value)}
                 disabled={loading}
                 required
-                className={`w-full px-3.5 py-2.5 rounded-xl text-sm border transition-colors outline-none appearance-none pr-9 cursor-pointer ${
+                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-colors outline-none appearance-none pr-9 cursor-pointer ${
                   isDark
-                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#B08D57]'
-                    : 'bg-white border-[#2A2926]/30 text-[#0B0B0B] focus:border-[#B08D57]'
+                    ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
                 }`}
               >
                 {members.map((mem) => {
-                  const isCurrent = mem.user_id === user.id;
-                  const displayName = mem.profile?.full_name || 'Member';
-                  const identifier = mem.profile?.email ? ` (${mem.profile.email})` : '';
+                  const isMe = mem.user_id === user?.id;
+                  const nameStr = mem.profile?.full_name || 'Member';
                   return (
-                    <option key={mem.id} value={mem.user_id}>
-                      {displayName} {isCurrent ? '(You)' : ''} {identifier}
+                    <option key={mem.user_id} value={mem.user_id}>
+                      {nameStr} {isMe ? '(You)' : ''}
                     </option>
                   );
                 })}
               </select>
-              <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-xs text-[#6F5738] dark:text-[#A6A29A]">
+              <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-xs text-[#292524] dark:text-[#A6A29A]">
                 ▼
               </div>
             </div>
-            <p className="text-[11px] text-[#6F5738] dark:text-[#A6A29A] mt-1">
-              Select which verified group member paid upfront for this bill.
-            </p>
           </div>
 
-          {/* 5. Split Between */}
-          <div className="space-y-2">
+          {/* 5. Split Distribution Mode */}
+          <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
-              <label className="block text-xs font-semibold text-[#0B0B0B] dark:text-white">
-                Split between ({selectedMemberIds.length} of {members.length} selected)
+              <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white">
+                Split Distribution
               </label>
-
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center gap-1 p-0.5 rounded-lg border border-[#E6DFC8] dark:border-[#2A2926] bg-[#FAF8F5] dark:bg-[#151515]">
                 <button
                   type="button"
-                  onClick={handleSelectAll}
-                  disabled={loading || selectedMemberIds.length === members.length}
-                  className="text-[#B08D57] hover:underline disabled:opacity-40"
+                  onClick={() => setSplitType('equal')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                    splitType === 'equal'
+                      ? 'bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black shadow-xs'
+                      : 'text-[#292524] dark:text-[#A6A29A] hover:text-black'
+                  }`}
                 >
-                  Select All
+                  Equal
                 </button>
-                <span className="text-[#2A2926]">|</span>
                 <button
                   type="button"
-                  onClick={handleDeselectAll}
-                  disabled={loading || selectedMemberIds.length === 0}
-                  className="text-[#6F5738] dark:text-[#A6A29A] hover:underline disabled:opacity-40"
+                  onClick={() => setSplitType('custom')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                    splitType === 'custom'
+                      ? 'bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black shadow-xs'
+                      : 'text-[#292524] dark:text-[#A6A29A] hover:text-black'
+                  }`}
                 >
-                  Deselect All
+                  Custom
                 </button>
               </div>
             </div>
 
-            <div
-              className={`rounded-xl border p-2 space-y-1.5 max-h-48 overflow-y-auto ${
-                isDark ? 'border-[#2A2926] bg-[#151515]/50' : 'border-[#2A2926]/20 bg-white/60'
-              }`}
-            >
-              {members.map((mem) => {
-                const isSelected = selectedMemberIds.includes(mem.user_id);
-                const isMe = mem.user_id === user.id;
-                return (
-                  <div
-                    key={mem.id}
-                    onClick={() => handleToggleMember(mem.user_id)}
-                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs select-none ${
-                      isSelected
-                        ? isDark
-                          ? 'bg-[#B08D57]/15 border border-[#B08D57]/30 text-white'
-                          : 'bg-[#B08D57]/15 border border-[#B08D57]/30 text-[#0B0B0B]'
-                        : isDark
-                        ? 'hover:bg-[#2A2926]/30 text-[#A6A29A]'
-                        : 'hover:bg-[#2A2926]/10 text-[#6F5738]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className="text-[#B08D57]">
-                        {isSelected ? (
-                          <CheckSquare className="w-4 h-4" />
-                        ) : (
-                          <Square className="w-4 h-4 opacity-50" />
-                        )}
-                      </div>
-                      <div>
-                        <span className="font-semibold text-xs text-[#0B0B0B] dark:text-white">
-                          {mem.profile?.full_name || 'Member'}
-                        </span>
-                        {isMe && <span className="ml-1 text-[#B08D57] font-semibold">(You)</span>}
-                        {mem.profile?.email && (
-                          <span className="block text-[10px] text-[#6F5738] dark:text-[#A6A29A]">
-                            {mem.profile.email}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {splitType === 'equal' && isSelected && parsedAmount > 0 && (
-                      <span className="font-mono text-xs font-medium text-[#B08D57]">
-                        {formatCurrency(
-                          calculateEqualShares().find((s) => s.userId === mem.user_id)?.amount || 0
-                        )}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 6. Split Type: Equal vs Custom */}
-          <div className="space-y-3 pt-1">
-            <label className="block text-xs font-semibold text-[#0B0B0B] dark:text-white">
-              Split type
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setSplitType('equal')}
-                className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all flex items-center justify-center gap-1.5 ${
-                  splitType === 'equal'
-                    ? 'border-[#B08D57] bg-[#B08D57] text-[#0B0B0B] shadow-sm'
-                    : isDark
-                    ? 'border-[#2A2926] bg-[#151515] text-[#A6A29A] hover:border-[#6F5738]'
-                    : 'border-[#2A2926]/30 bg-white text-[#6F5738] hover:border-[#6F5738]'
-                }`}
-              >
-                <span>Equal Split</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSplitType('custom');
-                  handleAutoDistributeCustom();
-                }}
-                className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all flex items-center justify-center gap-1.5 ${
-                  splitType === 'custom'
-                    ? 'border-[#B08D57] bg-[#B08D57] text-[#0B0B0B] shadow-sm'
-                    : isDark
-                    ? 'border-[#2A2926] bg-[#151515] text-[#A6A29A] hover:border-[#6F5738]'
-                    : 'border-[#2A2926]/30 bg-white text-[#6F5738] hover:border-[#6F5738]'
-                }`}
-              >
-                <span>Custom Split</span>
-              </button>
-            </div>
-
-            {/* Custom Split breakdown inputs */}
-            {splitType === 'custom' && (
-              <div
-                className={`p-3.5 rounded-xl border space-y-3 animate-in fade-in ${
-                  isDark ? 'border-[#2A2926] bg-[#151515]' : 'border-[#2A2926]/20 bg-white'
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-[#0B0B0B] dark:text-white">
-                    Member Shares
+            {/* Split Type: EQUAL */}
+            {splitType === 'equal' && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-[#292524] dark:text-[#A6A29A]">
+                  <span className="font-medium">
+                    Splitting equally among {selectedMemberIds.length} of {members.length} members
                   </span>
                   <button
                     type="button"
-                    onClick={handleAutoDistributeCustom}
-                    className="text-[#B08D57] hover:underline text-[11px]"
+                    onClick={toggleSelectAll}
+                    className="text-[#8C6B1F] dark:text-[#E6CA65] font-bold hover:underline"
                   >
-                    Distribute Equally
+                    {selectedMemberIds.length === members.length ? 'Deselect All' : 'Select All'}
                   </button>
                 </div>
 
-                {selectedMemberIds.length === 0 ? (
-                  <p className="text-xs text-[#6F5738] dark:text-[#A6A29A] italic">
-                    Select members above to configure custom shares.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {members
-                      .filter((m) => selectedMemberIds.includes(m.user_id))
-                      .map((mem) => {
-                        const val = customShares[mem.user_id] ?? '';
-                        return (
-                          <div
-                            key={mem.id}
-                            className="flex items-center justify-between gap-3 text-xs"
-                          >
-                            <span className="truncate font-medium text-[#0B0B0B] dark:text-white flex-1">
-                              {mem.profile?.full_name || 'Member'}
-                              {mem.user_id === user.id && (
-                                <span className="text-[#B08D57] ml-1">(You)</span>
-                              )}
-                            </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
+                  {members.map((mem) => {
+                    const isSelected = selectedMemberIds.includes(mem.user_id);
+                    const isMe = mem.user_id === user?.id;
+                    const memName = mem.profile?.full_name || 'Member';
 
-                            <div className="relative w-32 shrink-0">
-                              <span className="absolute inset-y-0 left-2.5 flex items-center text-xs text-[#B08D57] font-semibold pointer-events-none">
-                                ₹
-                              </span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={val}
-                                onChange={(e) => {
-                                  const newVal = e.target.value;
-                                  setCustomShares((prev) => ({
-                                    ...prev,
-                                    [mem.user_id]: newVal,
-                                  }));
-                                }}
-                                placeholder="0.00"
-                                className={`w-full pl-6 pr-2.5 py-1.5 rounded-lg text-xs font-mono font-medium border outline-none text-right ${
-                                  isDark
-                                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#B08D57]'
-                                    : 'bg-[#F5F2EA] border-[#2A2926]/30 text-[#0B0B0B] focus:border-[#B08D57]'
-                                }`}
-                              />
-                            </div>
+                    return (
+                      <div
+                        key={mem.user_id}
+                        onClick={() => toggleMember(mem.user_id)}
+                        className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                          isSelected
+                            ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-black dark:text-white'
+                            : 'border-[#E6DFC8] dark:border-[#2A2926] bg-[#FAF8F5] dark:bg-[#151515] opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isSelected ? (
+                            <CheckSquare className="w-4 h-4 text-[#8C6B1F] dark:text-[#E6CA65] shrink-0" />
+                          ) : (
+                            <Square className="w-4 h-4 text-[#292524] dark:text-[#A6A29A] shrink-0" />
+                          )}
+                          <span className="text-xs font-bold truncate">
+                            {memName} {isMe && '(You)'}
+                          </span>
+                        </div>
+
+                        {isSelected && parsedAmount > 0 && (
+                          <span className="text-xs font-mono font-bold text-[#8C6B1F] dark:text-[#E6CA65] shrink-0">
+                            {formatCurrency(equalSharePerPerson)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Split Type: CUSTOM */}
+            {splitType === 'custom' && (
+              <div className="space-y-3">
+                <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
+                  Specify the exact portion each participant owes for this expense:
+                </p>
+
+                <div className="space-y-2 max-h-56 overflow-y-auto p-1">
+                  {members.map((mem) => {
+                    const isMe = mem.user_id === user?.id;
+                    const memName = mem.profile?.full_name || 'Member';
+                    const currentVal = customShares[mem.user_id] ?? '';
+
+                    return (
+                      <div
+                        key={mem.user_id}
+                        className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 ${
+                          isDark ? 'border-[#2A2926] bg-[#151515]' : 'border-[#E6DFC8] bg-[#FAF8F5]'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold truncate text-black dark:text-white">
+                            {memName} {isMe && '(You)'}
+                          </p>
+                        </div>
+
+                        <div className="w-32 relative">
+                          <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-xs font-black text-[#8C6B1F] dark:text-[#E6CA65]">
+                            ₹
                           </div>
-                        );
-                      })}
-                  </div>
-                )}
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={currentVal}
+                            onChange={(e) => {
+                              setCustomShares({
+                                ...customShares,
+                                [mem.user_id]: e.target.value,
+                              });
+                            }}
+                            placeholder="0.00"
+                            className={`w-full pl-6 pr-2.5 py-1.5 rounded-lg text-xs font-mono font-bold border outline-none text-right ${
+                              isDark
+                                ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                                : 'bg-white border-[#E6DFC8] text-black focus:border-[#D4AF37]'
+                            }`}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
 
                 {/* Validation Status */}
                 <div
-                  className={`p-2.5 rounded-lg text-xs flex items-center justify-between border ${
+                  className={`p-2.5 rounded-lg text-xs flex items-center justify-between border font-bold ${
                     isCustomBalanced
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
-                      : 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                      : 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-400'
                   }`}
                 >
                   <div>
-                    <span className="font-semibold">Sum of shares: </span>
-                    <span className="font-mono font-bold">₹{customSharesSum.toFixed(2)}</span>
+                    <span className="font-bold">Sum of shares: </span>
+                    <span className="font-mono font-black">₹{customSharesSum.toFixed(2)}</span>
                     <span className="mx-1.5">/</span>
                     <span className="text-[11px] opacity-80">
                       Total: ₹{parsedAmount.toFixed(2)}
@@ -680,7 +578,7 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                   </div>
 
                   {!isCustomBalanced && (
-                    <span className="font-mono text-[11px] font-semibold">
+                    <span className="font-mono text-[11px] font-bold">
                       {customDifference > 0
                         ? `₹${customDifference.toFixed(2)} remaining`
                         : `₹${Math.abs(customDifference).toFixed(2)} over`}
@@ -688,8 +586,8 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
                   )}
 
                   {isCustomBalanced && (
-                    <span className="inline-flex items-center gap-1 font-semibold text-[11px]">
-                      <Check className="w-3.5 h-3.5" /> Balanced
+                    <span className="inline-flex items-center gap-1 font-bold text-[11px]">
+                      <Check className="w-3.5 h-3.5 stroke-[3]" /> Balanced
                     </span>
                   )}
                 </div>
@@ -698,15 +596,15 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
           </div>
 
           {/* Form Actions */}
-          <div className="pt-3 flex items-center justify-end gap-3 border-t border-[#2A2926]">
+          <div className="pt-3 flex items-center justify-end gap-3 border-t border-[#E6DFC8] dark:border-[#2A2926]">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold border transition-colors ${
                 isDark
                   ? 'border-[#2A2926] hover:bg-[#2A2926]/30 text-white'
-                  : 'border-[#2A2926]/30 hover:bg-[#2A2926]/10 text-[#0B0B0B]'
+                  : 'border-[#E6DFC8] hover:bg-[#FAF8F5] text-black'
               }`}
             >
               Cancel
@@ -715,12 +613,12 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
             <button
               type="submit"
               disabled={loading || (splitType === 'custom' && !isCustomBalanced)}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-[#0B0B0B] bg-[#B08D57] hover:bg-[#9F7E4C] active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all shadow-sm"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all shadow-sm border border-[#B38A22]/40"
             >
               {loading ? (
-                <div className="w-4 h-4 border-2 border-[#0B0B0B] border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
               ) : (
-                <Check className="w-4 h-4" />
+                <Check className="w-4 h-4 stroke-[3]" />
               )}
               <span>{editingExpense ? 'Update Expense' : 'Save Expense'}</span>
             </button>

@@ -22,17 +22,17 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const saved = localStorage.getItem('rupxa_theme');
       if (saved === 'dark' || saved === 'light' || saved === 'system') return saved;
     }
-    return 'dark'; // Dark theme default as specified
+    return 'light'; // Default to luxurious off-white theme
   });
 
-  const [isDark, setIsDark] = useState<boolean>(true);
+  const [isDark, setIsDark] = useState<boolean>(false);
 
   useEffect(() => {
     const root = document.documentElement;
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
     const applyTheme = () => {
-      let resolvedDark = true;
+      let resolvedDark = false;
       if (theme === 'system') {
         resolvedDark = mediaQuery.matches;
       } else {
@@ -48,8 +48,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else {
         root.classList.remove('dark');
         root.classList.add('light');
-        document.body.style.backgroundColor = '#F5F2EA';
-        document.body.style.color = '#0B0B0B';
+        document.body.style.backgroundColor = '#FAF8F5';
+        document.body.style.color = '#000000';
       }
     };
 
