@@ -97,8 +97,12 @@ export const MonthlyExpenseSummary: React.FC<MonthlyExpenseSummaryProps> = ({
       if (targetMonth) {
         targetMonth.total += expense.amount;
         targetMonth.count += 1;
-        targetMonth.categories[expense.category] =
-          (targetMonth.categories[expense.category] || 0) + expense.amount;
+        const catKey =
+          expense.category === 'Other' && expense.custom_category
+            ? expense.custom_category
+            : expense.category;
+        targetMonth.categories[catKey] =
+          (targetMonth.categories[catKey] || 0) + expense.amount;
       }
     });
 

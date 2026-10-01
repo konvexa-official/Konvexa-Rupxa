@@ -34,8 +34,8 @@ interface AuthContextType {
   }) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
-  updateProfileData: (updates: { fullName?: string; phone?: string; avatarUrl?: string }) => Promise<void>;
-  updateProfile: (updates: { full_name?: string; fullName?: string; phone?: string; avatar_url?: string; avatarUrl?: string }) => Promise<void>;
+  updateProfileData: (updates: { fullName?: string; phone?: string; avatarUrl?: string; upiId?: string | null }) => Promise<void>;
+  updateProfile: (updates: { full_name?: string; fullName?: string; phone?: string; avatar_url?: string; avatarUrl?: string; upi_id?: string | null; upiId?: string | null }) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -206,6 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fullName?: string;
     phone?: string;
     avatarUrl?: string;
+    upiId?: string | null;
   }) => {
     if (!user) throw new Error('No user logged in.');
 
@@ -227,6 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       full_name: cleanName,
       phone: cleanPhone,
       avatar_url: updates.avatarUrl !== undefined ? updates.avatarUrl : user.avatar_url,
+      upi_id: updates.upiId !== undefined ? (updates.upiId ? updates.upiId.trim() : null) : user.upi_id,
     });
 
     setUser(updated);
@@ -238,11 +240,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone?: string;
     avatar_url?: string;
     avatarUrl?: string;
+    upi_id?: string | null;
+    upiId?: string | null;
   }) => {
     return updateProfileData({
       fullName: updates.fullName || updates.full_name,
       phone: updates.phone,
       avatarUrl: updates.avatarUrl || updates.avatar_url,
+      upiId: updates.upiId !== undefined ? updates.upiId : updates.upi_id,
     });
   };
 

@@ -25,6 +25,7 @@ import {
   Sparkles,
   Sliders,
   ShieldCheck,
+  QrCode,
 } from 'lucide-react';
 import {
   getExpenseDetectionSettings,
@@ -45,6 +46,7 @@ export const Settings: React.FC = () => {
   // Profile form
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [phone, setPhone] = useState(user?.phone || '');
+  const [upiId, setUpiId] = useState(user?.upi_id || '');
   const [currency, setCurrency] = useState('INR');
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -83,6 +85,7 @@ export const Settings: React.FC = () => {
     if (user) {
       setFullName(user.full_name || '');
       setPhone(user.phone || '');
+      setUpiId(user.upi_id || '');
       setConnectedCards(getConnectedCards(user.id));
     }
   }, [user]);
@@ -98,6 +101,7 @@ export const Settings: React.FC = () => {
       await updateProfile({
         full_name: fullName.trim(),
         phone: cleanPhone,
+        upi_id: upiId.trim() || null,
       });
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 3000);
@@ -331,6 +335,30 @@ export const Settings: React.FC = () => {
             </div>
             <p className="text-[11px] text-[#292524] dark:text-[#A6A29A] mt-1 font-medium">
               Used by friends and peers to connect and invite you to shared expense splits.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-[#A6A29A] mb-1.5">
+              Default UPI ID (VPA)
+            </label>
+            <div className="relative">
+              <QrCode className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#C59B27]" />
+              <input
+                id="settings-upi-input"
+                type="text"
+                placeholder="e.g. yourname@okhdfcbank or 9876543210@paytm"
+                value={upiId}
+                onChange={(e) => setUpiId(e.target.value)}
+                className={`w-full pl-10 pr-3.5 py-2.5 rounded-xl text-xs font-mono font-bold border outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
+                  isDark
+                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37]'
+                }`}
+              />
+            </div>
+            <p className="text-[11px] text-[#292524] dark:text-[#A6A29A] mt-1 font-medium">
+              Enables friends to settle their split share with 1 tap via Google Pay, PhonePe, or Paytm.
             </p>
           </div>
 

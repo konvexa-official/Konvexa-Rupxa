@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { SplitGroup, SplitMember, SplitActivity, PublicUserSearchResult, GroupExpense } from '../types';
+import { SplitGroup, SplitMember, SplitActivity, PublicUserSearchResult, GroupExpense, SplitSettlement } from '../types';
 import {
   getSplitGroupDetails,
   updateMemberAmount,
@@ -11,10 +11,14 @@ import {
   subscribeToGroupUpdates,
   searchUserByContact,
   deleteGroupExpense,
+  recordSettlement,
 } from '../lib/db';
-import { formatCurrency, formatTime, formatTimelineGroup, parseMoney } from '../lib/formatters';
+import { formatCurrency, formatDateTime, formatTime, formatTimelineGroup, parseMoney } from '../lib/formatters';
 import { AddGroupExpenseModal } from './AddGroupExpenseModal';
 import { GroupExpenseDetailModal } from './GroupExpenseDetailModal';
+import { UpiSettlementModal } from './UpiSettlementModal';
+import { ShareSplitSummaryModal } from './ShareSplitSummaryModal';
+import { calculatePairwiseDebts, PairwiseDebt } from '../lib/upiUtils';
 import {
   ArrowLeft,
   Share2,
@@ -34,6 +38,13 @@ import {
   Calendar,
   CreditCard,
   ChevronRight,
+  MessageCircle,
+  QrCode,
+  ArrowDownRight,
+  ArrowUpRight,
+  CheckCircle,
+  Banknote,
+  Send,
 } from 'lucide-react';
 
 interface SplitGroupDetailProps {
@@ -82,6 +93,12 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Settlements & UPI states
+  const [settlements, setSettlements] = useState<SplitSettlement[]>([]);
+  const [selectedDebtForSettle, setSelectedDebtForSettle] = useState<PairwiseDebt | null>(null);
+  const [isShareDigestOpen, setIsShareDigestOpen] = useState(false);
+  const [isUpiModalOpen, setIsUpiModalOpen] = useState(false);
+
   // Fetch full details
   const fetchDetails = useCallback(async () => {
     if (!user) return;
@@ -92,6 +109,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         setMembers(data.members);
         setActivity(data.activity);
         setExpenses(data.expenses || []);
+        setSettlements(data.settlements || []);
       }
     } catch (err) {
       console.error('Failed to load group details:', err);
@@ -123,7 +141,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
     return expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
   }, [expenses]);
 
-  // Member balance calculation
+  // Member balance calculation (including settlements)
   const memberBalances = useMemo(() => {
     const balances: { [userId: string]: { paid: number; share: number; net: number } } = {};
 
@@ -142,6 +160,15 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       });
     });
 
+    settlements.forEach((s) => {
+      if (balances[s.from_user_id]) {
+        balances[s.from_user_id].paid += s.amount;
+      }
+      if (balances[s.to_user_id]) {
+        balances[s.to_user_id].share += s.amount;
+      }
+    });
+
     members.forEach((m) => {
       const record = balances[m.user_id];
       if (record) {
@@ -150,7 +177,45 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
     });
 
     return balances;
-  }, [members, expenses]);
+  }, [members, expenses, settlements]);
+
+  // Simplified pairwise debts (Who Owes Whom)
+  const debts = useMemo(() => {
+    return calculatePairwiseDebts(members, memberBalances);
+  }, [members, memberBalances]);
+
+  // Handler to record a settlement
+  const handleConfirmSettlement = async (params: {
+    amount: number;
+    paymentMethod: 'UPI' | 'Cash' | 'Bank' | 'Other';
+    upiRefId?: string;
+    note?: string;
+  }) => {
+    if (!user || !selectedDebtForSettle) return;
+    try {
+      await recordSettlement({
+        groupId,
+        fromUserId: selectedDebtForSettle.fromUserId,
+        toUserId: selectedDebtForSettle.toUserId,
+        amount: params.amount,
+        paymentMethod: params.paymentMethod,
+        upiRefId: params.upiRefId,
+        note: params.note,
+        actorProfile: {
+          id: user.id,
+          full_name: user.full_name,
+          email: user.email,
+          phone: user.phone || '',
+          avatar_url: user.avatar_url,
+          upi_id: user.upi_id,
+        },
+      });
+      await fetchDetails();
+    } catch (err) {
+      console.error('Failed to record settlement:', err);
+      setError('Failed to record settlement.');
+    }
+  };
 
   // Search user by email or phone
   const handleSearchUser = async () => {
@@ -359,6 +424,21 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           >
             <Share2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
             <span>Share Split</span>
+          </button>
+
+          {/* 1-Click WhatsApp & Social Summary Digest */}
+          <button
+            id="share-whatsapp-digest-btn"
+            type="button"
+            onClick={() => setIsShareDigestOpen(true)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+              isDark
+                ? 'bg-emerald-950/40 text-emerald-400 border-emerald-800/60 hover:bg-emerald-900/50'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
+            }`}
+          >
+            <MessageCircle className="w-3.5 h-3.5 fill-current" />
+            <span>WhatsApp Digest</span>
           </button>
 
           {/* If Owner: Edit Group Details */}
@@ -601,12 +681,13 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 'Member';
               const isPaidByMe = exp.paid_by_user_id === user?.id;
 
-              const formattedDate = exp.created_at
-                ? new Date(exp.created_at).toLocaleDateString('en-IN', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })
+              const rawRef = exp.reference !== undefined && exp.reference !== null
+                ? exp.reference.trim()
+                : (exp.name && exp.name.trim() !== 'Expense' && exp.name.trim() !== 'Untitled' ? exp.name.trim() : '');
+              const hasReference = Boolean(rawRef);
+
+              const formattedDateTime = exp.created_at
+                ? formatDateTime(exp.created_at)
                 : 'Recently';
 
               return (
@@ -630,9 +711,11 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
 
                     <div className="min-w-0 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-sm text-black dark:text-white truncate">
-                          {exp.name}
-                        </span>
+                        {hasReference && (
+                          <span className="font-black text-sm text-black dark:text-white truncate">
+                            {rawRef}
+                          </span>
+                        )}
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/30">
                           {exp.category}
                         </span>
@@ -649,7 +732,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                         <span>•</span>
                         <span className="flex items-center gap-1">
                           <Calendar className="w-3 h-3 text-[#C59B27]" />
-                          <span>{formattedDate}</span>
+                          <span>{formattedDateTime}</span>
                         </span>
                         <span>•</span>
                         <span>
@@ -825,7 +908,185 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         </div>
       </div>
 
-      {/* 4. Activity History Section */}
+      {/* 4. Instant UPI Settlements & Who Owes Whom */}
+      <div
+        id="split-settlements-section"
+        className={`rounded-2xl border p-5 sm:p-6 transition-all ${
+          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-white border-[#E6DFC8] shadow-xs'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-[#E6DFC8] dark:border-[#2A2926]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#DFB15B] to-[#C59B27] text-black flex items-center justify-center font-black shadow-md border border-[#B38A22]/50">
+              <QrCode className="w-4 h-4 stroke-[2.5]" />
+            </div>
+            <div>
+              <h2
+                className="text-lg font-black tracking-tight text-black dark:text-white flex items-center gap-2"
+                style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+              >
+                <span>Instant Settlements & Debts</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/30 uppercase tracking-wider">
+                  UPI 1-Tap
+                </span>
+              </h2>
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
+                Minimum cash flow netting · Launch GPay, PhonePe, Paytm, or scan QR
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsShareDigestOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 hover:bg-emerald-900/50 transition-all self-start sm:self-auto"
+          >
+            <MessageCircle className="w-3.5 h-3.5 fill-current" />
+            <span>Share on WhatsApp</span>
+          </button>
+        </div>
+
+        {/* Pairwise debts list */}
+        {debts.length === 0 ? (
+          <div className="p-8 text-center rounded-xl bg-[#FAF8F5] dark:bg-[#141414] border border-[#E6DFC8] dark:border-[#2A2926] space-y-2">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto">
+              <CheckCircle className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <h3 className="text-sm font-black text-black dark:text-white">
+              All Debts Settled!
+            </h3>
+            <p className="text-xs text-[#292524] dark:text-[#A6A29A] max-w-sm mx-auto font-medium">
+              Everyone in this group is squared up with a ₹0.00 net balance.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {debts.map((debt, idx) => {
+              const isDebtor = debt.fromUserId === user?.id;
+              const isCreditor = debt.toUserId === user?.id;
+
+              return (
+                <div
+                  key={`${debt.fromUserId}_${debt.toUserId}_${idx}`}
+                  className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-all ${
+                    isDebtor
+                      ? isDark
+                        ? 'bg-[#151515] border-[#D4AF37] ring-1 ring-[#D4AF37]/40'
+                        : 'bg-[#FAF8F5] border-[#D4AF37] ring-1 ring-[#D4AF37]/30 shadow-xs'
+                      : isDark
+                      ? 'bg-[#121212] border-[#2A2926]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    {/* Debtor */}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/40 flex items-center justify-center text-xs font-bold shrink-0">
+                        {debt.fromName[0]?.toUpperCase() || 'D'}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-black dark:text-white truncate block">
+                          {debt.fromName} {isDebtor && '(You)'}
+                        </span>
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                          Owes
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Arrow & Amount */}
+                    <div className="text-center px-2 shrink-0">
+                      <span className="text-sm sm:text-base font-black font-mono text-[#8C6B1F] dark:text-[#E6CA65] block">
+                        {formatCurrency(debt.amount)}
+                      </span>
+                    </div>
+
+                    {/* Creditor */}
+                    <div className="flex items-center gap-2 min-w-0 justify-end text-right">
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-black dark:text-white truncate block">
+                          {debt.toName} {isCreditor && '(You)'}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">
+                          Receives
+                        </span>
+                      </div>
+                      <div className="w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 flex items-center justify-center text-xs font-bold shrink-0">
+                        {debt.toName[0]?.toUpperCase() || 'C'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Settle Action Button */}
+                  <div className="pt-2 border-t border-[#E6DFC8] dark:border-[#2A2926] flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-[#A6A29A] truncate">
+                      {debt.toUpiId ? `UPI: ${debt.toUpiId}` : 'Instant settlement'}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedDebtForSettle(debt);
+                        setIsUpiModalOpen(true);
+                      }}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
+                        isDebtor
+                          ? 'bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105 shadow-md border border-[#B38A22]/50'
+                          : 'bg-white/10 hover:bg-white/15 text-white border border-white/10'
+                      }`}
+                    >
+                      <QrCode className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>{isDebtor ? `Pay via UPI (₹${debt.amount})` : 'Settle / QR'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Recorded Settlements History */}
+        {settlements.length > 0 && (
+          <div className="mt-6 pt-5 border-t border-[#E6DFC8] dark:border-[#2A2926] space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-[#A6A29A]">
+              Past Settlements ({settlements.length})
+            </h3>
+            <div className="space-y-2">
+              {settlements.map((s) => (
+                <div
+                  key={s.id}
+                  className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                    isDark
+                      ? 'bg-[#121212] border-[#2A2926]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-black dark:text-white truncate">
+                        <strong>{s.from_profile?.full_name || 'Member'}</strong> paid{' '}
+                        <strong>{s.to_profile?.full_name || 'Member'}</strong>
+                      </p>
+                      <span className="text-[10px] text-[#A6A29A]">
+                        {s.payment_method} {s.upi_ref_id ? `· Ref: ${s.upi_ref_id}` : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="font-mono font-black text-emerald-500 shrink-0">
+                    +{formatCurrency(s.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 5. Activity History Section */}
       <div
         id="split-activity-section"
         className={`rounded-2xl border p-5 sm:p-6 transition-all ${
@@ -928,6 +1189,45 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                       );
                     }
 
+                    if (act.action_type === 'edit_expense_reference') {
+                      const actorName = act.actor?.full_name || 'Member';
+                      return (
+                        <div
+                          key={act.id}
+                          id={`activity-item-${act.id}`}
+                          className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                            isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <div className="w-2 h-2 rounded-full bg-[#D4AF37] mt-1.5 shrink-0" />
+                            <div>
+                              <p className="font-bold text-black dark:text-white">
+                                {actorName} changed reference
+                              </p>
+                              <p className="font-mono text-[11px] text-[#8C6B1F] dark:text-[#E6CA65] mt-0.5 font-bold">
+                                &ldquo;{act.old_value || 'None'}&rdquo; → &ldquo;{act.new_value || 'None'}&rdquo;
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] shrink-0 font-mono font-medium">
+                            {formatTime(act.created_at)}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    const isOldNumeric =
+                      act.old_value !== null &&
+                      act.old_value !== undefined &&
+                      !isNaN(Number(act.old_value)) &&
+                      act.old_value.trim() !== '';
+                    const isNewNumeric =
+                      act.new_value !== null &&
+                      act.new_value !== undefined &&
+                      !isNaN(Number(act.new_value)) &&
+                      act.new_value.trim() !== '';
+
                     return (
                       <div
                         key={act.id}
@@ -944,7 +1244,8 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                             </p>
                             {act.old_value && act.new_value && (
                               <p className="font-mono text-[11px] text-[#8C6B1F] dark:text-[#E6CA65] mt-0.5 font-bold">
-                                {formatCurrency(act.old_value)} → {formatCurrency(act.new_value)}
+                                {isOldNumeric ? formatCurrency(act.old_value) : `"${act.old_value}"`} →{' '}
+                                {isNewNumeric ? formatCurrency(act.new_value) : `"${act.new_value}"`}
                               </p>
                             )}
                           </div>
@@ -1276,6 +1577,49 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
             </div>
           </div>
         </div>
+      )}
+
+      {/* 1-Click WhatsApp & Social Group Digest Modal */}
+      {group && (
+        <ShareSplitSummaryModal
+          isOpen={isShareDigestOpen}
+          onClose={() => setIsShareDigestOpen(false)}
+          group={group}
+          members={members}
+          expenses={expenses}
+          memberBalances={memberBalances}
+          debts={debts}
+          isDark={isDark}
+        />
+      )}
+
+      {/* Instant 1-Tap UPI Settlement & QR Modal */}
+      {selectedDebtForSettle && user && group && (
+        <UpiSettlementModal
+          isOpen={isUpiModalOpen}
+          onClose={() => {
+            setIsUpiModalOpen(false);
+            setSelectedDebtForSettle(null);
+          }}
+          groupId={groupId}
+          groupName={group.name}
+          fromProfile={{
+            id: user.id,
+            full_name: user.full_name,
+            email: user.email,
+            phone: user.phone || '',
+            avatar_url: user.avatar_url,
+            upi_id: user.upi_id,
+          }}
+          toProfile={{
+            id: selectedDebtForSettle.toUserId,
+            full_name: selectedDebtForSettle.toName,
+            upi_id: selectedDebtForSettle.toUpiId,
+          }}
+          debtAmount={selectedDebtForSettle.amount}
+          onConfirmSettlement={handleConfirmSettlement}
+          isDark={isDark}
+        />
       )}
     </div>
   );

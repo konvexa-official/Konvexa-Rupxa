@@ -67,7 +67,9 @@ export const Expenses: React.FC<ExpensesProps> = ({
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const descMatch = (e.description || '').toLowerCase().includes(query);
-        const catMatch = (e.category || '').toLowerCase().includes(query);
+        const catMatch =
+          (e.category || '').toLowerCase().includes(query) ||
+          (e.custom_category || '').toLowerCase().includes(query);
         const payMatch = (e.payment_method || '').toLowerCase().includes(query);
         const amountMatch = (e.amount || '').toString().includes(query);
 
@@ -431,7 +433,9 @@ export const Expenses: React.FC<ExpensesProps> = ({
                       </p>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-[#292524] dark:text-[#A6A29A] mt-1">
                         <span className="font-bold text-black dark:text-white">
-                          {expense.category}
+                          {expense.category === 'Other' && expense.custom_category
+                            ? expense.custom_category
+                            : expense.category}
                         </span>
                         <span>•</span>
                         <span>{formatDate(expense.expense_date)}</span>

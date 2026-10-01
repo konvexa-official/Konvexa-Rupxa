@@ -48,6 +48,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<ExpenseCategory>('Food');
+  const [customCategory, setCustomCategory] = useState('');
   const [expenseDate, setExpenseDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('UPI');
   const [loading, setLoading] = useState(false);
@@ -59,12 +60,14 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       setAmount(editingExpense.amount.toString());
       setDescription(editingExpense.description);
       setCategory(editingExpense.category);
+      setCustomCategory(editingExpense.custom_category || '');
       setExpenseDate(editingExpense.expense_date);
       setPaymentMethod(editingExpense.payment_method);
     } else {
       setAmount('');
       setDescription('');
       setCategory('Food');
+      setCustomCategory('');
       const now = new Date();
       setExpenseDate(
         `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
@@ -135,6 +138,15 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       setError('Description cannot be empty.');
       return;
     }
+
+    const trimmedCustomCategory = customCategory.trim();
+    if (category === 'Other') {
+      if (!trimmedCustomCategory) {
+        setError('Please enter a custom category name.');
+        return;
+      }
+    }
+
     if (!expenseDate) {
       setError('Please select a valid date.');
       return;
@@ -150,6 +162,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         await updateExpense(editingExpense.id, user.id, {
           amount: safeAmount,
           category,
+          custom_category: category === 'Other' ? trimmedCustomCategory : null,
           description: description.trim(),
           expense_date: expenseDate,
           payment_method: paymentMethod,
@@ -159,6 +172,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           user_id: user.id,
           amount: safeAmount,
           category,
+          custom_category: category === 'Other' ? trimmedCustomCategory : null,
           description: description.trim(),
           expense_date: expenseDate,
           payment_method: paymentMethod,
@@ -316,6 +330,28 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
               </select>
             </div>
           </div>
+
+          {/* Custom Category Name (Required only when Category = Other, Hidden for all other categories) */}
+          {category === 'Other' && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
+                Custom Category Name <span className="text-[#C59B27]">*</span>
+              </label>
+              <input
+                id="expense-custom-category-input"
+                type="text"
+                required
+                placeholder="Enter category name"
+                value={customCategory}
+                onChange={(e) => setCustomCategory(e.target.value)}
+                className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
+                  isDark
+                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
+                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
+                }`}
+              />
+            </div>
+          )}
 
           {/* Subtle Live Budget Target Alert Callout */}
           {budgetAlert && (

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { GroupExpense, SplitMember } from '../types';
-import { formatCurrency } from '../lib/formatters';
+import { formatCurrency, formatDateTime } from '../lib/formatters';
 import { deleteGroupExpense } from '../lib/db';
 import {
   X,
@@ -66,12 +66,16 @@ export const GroupExpenseDetailModal: React.FC<GroupExpenseDetailModalProps> = (
     paidByMember?.profile?.full_name ||
     'Member';
 
-  const formattedDate = expense.created_at
-    ? new Date(expense.created_at).toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      })
+  const rawRef =
+    expense.reference !== undefined && expense.reference !== null
+      ? expense.reference.trim()
+      : expense.name && expense.name.trim() !== 'Expense' && expense.name.trim() !== 'Untitled'
+      ? expense.name.trim()
+      : '';
+  const hasReference = Boolean(rawRef);
+
+  const formattedDateTime = expense.created_at
+    ? formatDateTime(expense.created_at)
     : 'Recently';
 
   // Permissions: Group owner can delete any expense; Normal member can delete only their own
@@ -200,15 +204,17 @@ export const GroupExpenseDetailModal: React.FC<GroupExpenseDetailModalProps> = (
                 </span>
                 <span className="text-xs text-[#292524] dark:text-[#A6A29A] flex items-center gap-1 font-semibold">
                   <Calendar className="w-3 h-3 text-[#C59B27]" />
-                  {formattedDate}
+                  {formattedDateTime}
                 </span>
               </div>
-              <h3
-                className="text-xl font-black mt-1 text-black dark:text-white tracking-tight"
-                style={{ fontFamily: 'Space Grotesk, sans-serif' }}
-              >
-                {expense.name}
-              </h3>
+              {hasReference && (
+                <h3
+                  className="text-xl font-black mt-1 text-black dark:text-white tracking-tight"
+                  style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+                >
+                  {rawRef}
+                </h3>
+              )}
             </div>
 
             <div className="sm:text-right">

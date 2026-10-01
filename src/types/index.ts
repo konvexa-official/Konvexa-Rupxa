@@ -8,6 +8,7 @@ export interface Profile {
   email: string;
   phone: string;
   avatar_url?: string | null;
+  upi_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -41,6 +42,7 @@ export interface Expense {
   user_id: string;
   amount: number;
   category: ExpenseCategory;
+  custom_category?: string | null;
   description: string;
   expense_date: string; // YYYY-MM-DD
   payment_method: PaymentMethod;
@@ -80,8 +82,24 @@ export type SplitActionType =
   | 'leave_group'
   | 'add_expense'
   | 'edit_expense'
+  | 'edit_expense_reference'
   | 'delete_expense'
-  | 'EXPENSE_DELETED';
+  | 'EXPENSE_DELETED'
+  | 'settle_debt';
+
+export interface SplitSettlement {
+  id: string;
+  split_group_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount: number;
+  payment_method: 'UPI' | 'Cash' | 'Bank' | 'Other';
+  upi_ref_id?: string;
+  note?: string;
+  settled_at: string;
+  from_profile?: Profile;
+  to_profile?: Profile;
+}
 
 export interface GroupExpenseShare {
   user_id: string;
@@ -93,6 +111,7 @@ export interface GroupExpense {
   id: string;
   split_group_id: string;
   name: string;
+  reference?: string | null;
   amount: number;
   category: string;
   paid_by_user_id: string;

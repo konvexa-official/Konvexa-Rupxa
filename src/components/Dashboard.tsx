@@ -351,7 +351,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </p>
                       <div className="flex items-center gap-2 text-xs text-[#292524] dark:text-[#A6A29A] mt-0.5">
                         <span className="font-bold text-black dark:text-white">
-                          {expense.category}
+                          {expense.category === 'Other' && expense.custom_category
+                            ? expense.custom_category
+                            : expense.category}
                         </span>
                         <span>•</span>
                         <span>{formatDate(expense.expense_date)}</span>

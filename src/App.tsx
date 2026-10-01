@@ -11,6 +11,8 @@ import { Settings } from './components/Settings';
 import { ExpenseModal } from './components/ExpenseModal';
 import { JoinSplitInviteModal } from './components/JoinSplitInviteModal';
 import { BudgetSettingsModal } from './components/BudgetSettingsModal';
+import { PwaInstallPrompt } from './components/PwaInstallPrompt';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { getUserExpenses, getUserSplitGroups, getCategoryBudgets } from './lib/db';
 import { computeMonthlyBudgetStatuses } from './lib/budgetHelpers';
 import { Expense, SplitGroupSummary, ActiveTab } from './types';
@@ -226,6 +228,10 @@ function MainApp() {
           }}
         />
       )}
+
+      {/* PWA Install Banner & Offline Mode Indicator */}
+      <PwaInstallPrompt />
+      <OfflineIndicator />
     </div>
   );
 }

@@ -110,6 +110,25 @@ export function formatDate(dateString: string): string {
 }
 
 /**
+ * Format date and time: e.g. "12 Oct 2026, 3:45 PM"
+ */
+export function formatDateTime(dateString: string): string {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  const formattedDate = date.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+  const formattedTime = date.toLocaleTimeString('en-IN', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${formattedDate}, ${formattedTime}`;
+}
+
+/**
  * Format activity timestamp: "5:50 PM" or "22 Sep, 5:50 PM"
  */
 export function formatTime(timestamp: string): string {

@@ -46,7 +46,7 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
   const { user } = useAuth();
   const { isDark } = useTheme();
 
-  const [name, setName] = useState('');
+  const [reference, setReference] = useState('');
   const [amount, setAmount] = useState('');
   const [categorySelect, setCategorySelect] = useState<string>('Food');
   const [customCategory, setCustomCategory] = useState('');
@@ -66,7 +66,10 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
     const memberIds = members.map((m) => m.user_id);
 
     if (editingExpense) {
-      setName(editingExpense.name);
+      const existingRef = editingExpense.reference !== undefined && editingExpense.reference !== null
+        ? editingExpense.reference
+        : editingExpense.name || '';
+      setReference(existingRef);
       setAmount(editingExpense.amount.toString());
 
       const isPredefined = PREDEFINED_CATEGORIES.includes(
@@ -92,7 +95,7 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
       });
       setCustomShares(sharesMap);
     } else {
-      setName('');
+      setReference('');
       setAmount('');
       setCategorySelect('Food');
       setCustomCategory('');
@@ -150,11 +153,7 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
     e.preventDefault();
     if (!user) return;
 
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError('Please provide an expense title.');
-      return;
-    }
+    const trimmedReference = reference.trim();
 
     if (parsedAmount <= 0) {
       setError('Please enter a valid expense amount greater than 0.');
@@ -198,7 +197,8 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
         await updateGroupExpense({
           expenseId: editingExpense.id,
           groupId,
-          name: trimmedName,
+          name: trimmedReference,
+          reference: trimmedReference || null,
           amount: parsedAmount,
           category: finalCategory,
           paidByUserId,
@@ -210,7 +210,8 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
       } else {
         await addGroupExpense({
           groupId,
-          name: trimmedName,
+          name: trimmedReference,
+          reference: trimmedReference || null,
           amount: parsedAmount,
           category: finalCategory,
           paidByUserId,
@@ -288,19 +289,24 @@ export const AddGroupExpenseModal: React.FC<AddGroupExpenseModalProps> = ({
             </div>
           )}
 
-          {/* 1. Expense Name */}
+          {/* 1. Reference / Description */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white mb-1.5">
-              Expense name <span className="text-[#C59B27]">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white">
+                Reference / Description
+              </label>
+              <span className="text-[10px] text-[#A6A29A] font-semibold uppercase tracking-wider">
+                Optional
+              </span>
+            </div>
             <div className="relative">
               <input
+                id="group-expense-reference-input"
                 type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Dinner, Taxi, Villa Booking, Groceries"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="What is this amount for?"
                 disabled={loading}
-                required
                 className={`w-full px-3.5 py-2.5 rounded-xl text-sm border transition-colors outline-none font-medium ${
                   isDark
                     ? 'bg-[#151515] border-[#2A2926] text-white focus:border-[#D4AF37]'

@@ -19,7 +19,10 @@ import {
   fsSubscribeToGroupUpdates,
   fsGetBudgets,
   fsSetAllBudgets,
+  fsAddGroupExpense,
+  fsUpdateGroupExpense,
   fsDeleteGroupExpense,
+  fsRecordSettlement,
 } from './firestoreDb';
 import {
   Profile,
@@ -30,6 +33,7 @@ import {
   PublicUserSearchResult,
   SplitGroupSummary,
   GroupExpense,
+  SplitSettlement,
 } from '../types';
 import { maskEmail, maskPhone, normalizePhoneNumber, parseMoney } from './formatters';
 
@@ -41,6 +45,7 @@ const STORAGE_KEYS = {
   SPLIT_MEMBERS: 'rupxa_split_members_v1',
   SPLIT_ACTIVITY: 'rupxa_split_activity_v1',
   SPLIT_GROUP_EXPENSES: 'rupxa_split_group_expenses_v1',
+  SPLIT_SETTLEMENTS: 'rupxa_split_settlements_v1',
   BUDGETS: 'rupxa_budgets_v1',
 };
 
@@ -218,12 +223,17 @@ export async function createExpense(
 ): Promise<Expense> {
   const now = new Date().toISOString();
   const safeAmount = parseMoney(expense.amount);
+  const cleanCustomCategory =
+    expense.category === 'Other' && expense.custom_category
+      ? expense.custom_category.trim()
+      : null;
 
   if (isFirebaseConfigured()) {
     try {
       return await fsCreateExpense({
         ...expense,
         amount: safeAmount,
+        custom_category: cleanCustomCategory,
       });
     } catch (e) {
       console.warn('Firestore createExpense notice:', e);
@@ -236,6 +246,7 @@ export async function createExpense(
     ...expense,
     id: `exp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     amount: safeAmount,
+    custom_category: cleanCustomCategory,
     created_at: now,
     updated_at: now,
   };
@@ -256,6 +267,17 @@ export async function updateExpense(
   const safeUpdates = {
     ...rawUpdates,
     ...(rawUpdates.amount !== undefined ? { amount: parseMoney(rawUpdates.amount) } : {}),
+    ...(rawUpdates.category !== undefined
+      ? {
+          category: rawUpdates.category,
+          custom_category:
+            rawUpdates.category === 'Other' && rawUpdates.custom_category
+              ? rawUpdates.custom_category.trim()
+              : null,
+        }
+      : rawUpdates.custom_category !== undefined
+      ? { custom_category: rawUpdates.custom_category ? rawUpdates.custom_category.trim() : null }
+      : {}),
   };
 
   if (isFirebaseConfigured()) {
@@ -388,7 +410,8 @@ export async function getGroupExpenses(groupId: string): Promise<GroupExpense[]>
 
 export async function addGroupExpense(params: {
   groupId: string;
-  name: string;
+  name?: string;
+  reference?: string | null;
   amount: number;
   category: string;
   paidByUserId: string;
@@ -400,39 +423,21 @@ export async function addGroupExpense(params: {
 }): Promise<GroupExpense> {
   const now = new Date().toISOString();
   const safeTotal = parseMoney(params.amount);
+  const cleanRef = params.reference !== undefined
+    ? (params.reference?.trim() || null)
+    : (params.name?.trim() || null);
+  const cleanName = cleanRef || '';
 
   if (isFirebaseConfigured()) {
     try {
-      const details = await fsGetSplitGroupDetails(params.groupId, params.paidByUserId);
-      if (details) {
-        const expId = `gexp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        const newExp: GroupExpense = {
-          id: expId,
-          split_group_id: params.groupId,
-          name: params.name.trim(),
-          amount: safeTotal,
-          category: params.category,
-          paid_by_user_id: params.paidByUserId,
-          paid_by_profile: params.actorProfile,
-          split_type: params.splitType,
-          shares: params.shares.map((s) => ({
-            user_id: s.userId,
-            amount: parseMoney(s.amount),
-            profile: s.profile,
-          })),
-          created_by: params.actorProfile.id,
-          created_at: now,
-          updated_at: now,
-        };
-
-        const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
-        allExpenses.unshift(newExp);
-        writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
-        emitLocalRealtime(params.groupId, 'expense_added', { expense: newExp });
-        return newExp;
-      }
+      const newExp = await fsAddGroupExpense(params);
+      const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+      allExpenses.unshift(newExp);
+      writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
+      emitLocalRealtime(params.groupId, 'expense_added', { expense: newExp });
+      return newExp;
     } catch (err) {
-      console.warn('Firestore addGroupExpense notice:', err);
+      console.warn('Firestore addGroupExpense error, falling back to local storage:', err);
     }
   }
 
@@ -446,7 +451,8 @@ export async function addGroupExpense(params: {
   const newExp: GroupExpense = {
     id: expId,
     split_group_id: params.groupId,
-    name: params.name.trim(),
+    name: cleanName,
+    reference: cleanRef,
     amount: safeTotal,
     category: params.category,
     paid_by_user_id: params.paidByUserId,
@@ -492,6 +498,10 @@ export async function addGroupExpense(params: {
   writeLocal(STORAGE_KEYS.SPLIT_MEMBERS, allMembers);
 
   // Log activity
+  const actDesc = cleanRef
+    ? `${params.actorProfile.full_name} added expense "${cleanRef}" (₹${safeTotal.toLocaleString('en-IN')})`
+    : `${params.actorProfile.full_name} added expense (₹${safeTotal.toLocaleString('en-IN')})`;
+
   const act: SplitActivity = {
     id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     split_group_id: params.groupId,
@@ -499,7 +509,7 @@ export async function addGroupExpense(params: {
     action_type: 'add_expense',
     old_value: null,
     new_value: safeTotal.toString(),
-    description: `${params.actorProfile.full_name} added expense "${params.name.trim()}" (₹${safeTotal.toLocaleString('en-IN')})`,
+    description: actDesc,
     created_at: now,
     actor: params.actorProfile,
   };
@@ -513,7 +523,8 @@ export async function addGroupExpense(params: {
 export async function updateGroupExpense(params: {
   expenseId: string;
   groupId: string;
-  name: string;
+  name?: string;
+  reference?: string | null;
   amount: number;
   category: string;
   paidByUserId: string;
@@ -526,6 +537,22 @@ export async function updateGroupExpense(params: {
   const now = new Date().toISOString();
   const safeTotal = parseMoney(params.amount);
 
+  if (isFirebaseConfigured()) {
+    try {
+      const updatedExp = await fsUpdateGroupExpense(params);
+      const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+      const expIdx = allExpenses.findIndex((e) => e.id === params.expenseId);
+      if (expIdx !== -1) {
+        allExpenses[expIdx] = updatedExp;
+        writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
+      }
+      emitLocalRealtime(params.groupId, 'expense_updated', { expense: updatedExp });
+      return updatedExp;
+    } catch (err) {
+      console.warn('Firestore updateGroupExpense error, falling back to local storage:', err);
+    }
+  }
+
   const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
   const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
   const allMembers = readLocal<SplitMember[]>(STORAGE_KEYS.SPLIT_MEMBERS, []);
@@ -536,10 +563,14 @@ export async function updateGroupExpense(params: {
 
   const oldExp = allExpenses[expIdx];
   const oldAmount = oldExp.amount;
+  const oldRef = (oldExp.reference !== undefined ? oldExp.reference : oldExp.name) || '';
+  const newRef = (params.reference !== undefined ? (params.reference?.trim() || '') : (params.name?.trim() || '')) || '';
+  const isReferenceChanged = oldRef !== newRef;
 
   const updatedExp: GroupExpense = {
     ...oldExp,
-    name: params.name.trim(),
+    name: newRef,
+    reference: newRef || null,
     amount: safeTotal,
     category: params.category,
     paid_by_user_id: params.paidByUserId,
@@ -583,17 +614,31 @@ export async function updateGroupExpense(params: {
   writeLocal(STORAGE_KEYS.SPLIT_MEMBERS, allMembers);
 
   // Log activity
-  const act: SplitActivity = {
-    id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-    split_group_id: params.groupId,
-    actor_user_id: params.actorProfile.id,
-    action_type: 'edit_expense',
-    old_value: oldAmount.toString(),
-    new_value: safeTotal.toString(),
-    description: `${params.actorProfile.full_name} updated expense "${params.name.trim()}"`,
-    created_at: now,
-    actor: params.actorProfile,
-  };
+  // If reference was edited, record who changed it, previous reference, new reference, and date/time
+  const act: SplitActivity = isReferenceChanged
+    ? {
+        id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        split_group_id: params.groupId,
+        actor_user_id: params.actorProfile.id,
+        action_type: 'edit_expense_reference',
+        old_value: oldRef,
+        new_value: newRef,
+        description: `${params.actorProfile.full_name} changed reference`,
+        created_at: now,
+        actor: params.actorProfile,
+      }
+    : {
+        id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        split_group_id: params.groupId,
+        actor_user_id: params.actorProfile.id,
+        action_type: 'edit_expense',
+        old_value: oldAmount.toString(),
+        new_value: safeTotal.toString(),
+        description: `${params.actorProfile.full_name} updated expense ${newRef ? `"${newRef}"` : ''}`,
+        created_at: now,
+        actor: params.actorProfile,
+      };
+
   allActivity.unshift(act);
   writeLocal(STORAGE_KEYS.SPLIT_ACTIVITY, allActivity);
 
@@ -715,6 +760,7 @@ export async function getSplitGroupDetails(
   members: SplitMember[];
   activity: SplitActivity[];
   expenses: GroupExpense[];
+  settlements: SplitSettlement[];
 } | null> {
   if (isFirebaseConfigured()) {
     try {
@@ -731,6 +777,7 @@ export async function getSplitGroupDetails(
   const allActivity = readLocal<SplitActivity[]>(STORAGE_KEYS.SPLIT_ACTIVITY, []);
   const allProfiles = readLocal<Profile[]>(STORAGE_KEYS.PROFILES, []);
   const allGroupExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+  const allSettlements = readLocal<SplitSettlement[]>(STORAGE_KEYS.SPLIT_SETTLEMENTS, []);
 
   const group = allGroups.find((g) => g.id === groupId);
   if (!group) return null;
@@ -766,6 +813,16 @@ export async function getSplitGroupDetails(
     }))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+  const settlements = allSettlements
+    .filter((s) => s.split_group_id === groupId)
+    .map((s) => ({
+      ...s,
+      amount: parseMoney(s.amount),
+      from_profile: allProfiles.find((p) => p.id === s.from_user_id),
+      to_profile: allProfiles.find((p) => p.id === s.to_user_id),
+    }))
+    .sort((a, b) => new Date(b.settled_at).getTime() - new Date(a.settled_at).getTime());
+
   const calculatedTotal = expenses.length > 0
     ? parseMoney(expenses.reduce((sum, e) => sum + parseMoney(e.amount), 0))
     : parseMoney(group.total_amount);
@@ -779,7 +836,71 @@ export async function getSplitGroupDetails(
     members,
     activity,
     expenses,
+    settlements,
   };
+}
+
+export async function recordSettlement(params: {
+  groupId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: number;
+  paymentMethod: 'UPI' | 'Cash' | 'Bank' | 'Other';
+  upiRefId?: string;
+  note?: string;
+  actorProfile: Profile;
+}): Promise<SplitSettlement> {
+  const now = new Date().toISOString();
+  const safeAmount = parseMoney(params.amount);
+
+  if (isFirebaseConfigured()) {
+    try {
+      await fsRecordSettlement(params);
+    } catch (e) {
+      console.warn('Firestore fsRecordSettlement notice:', e);
+    }
+  }
+
+  const allSettlements = readLocal<SplitSettlement[]>(STORAGE_KEYS.SPLIT_SETTLEMENTS, []);
+  const allProfiles = readLocal<Profile[]>(STORAGE_KEYS.PROFILES, []);
+  const allActivity = readLocal<SplitActivity[]>(STORAGE_KEYS.SPLIT_ACTIVITY, []);
+
+  const newSettlement: SplitSettlement = {
+    id: `stl_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    split_group_id: params.groupId,
+    from_user_id: params.fromUserId,
+    to_user_id: params.toUserId,
+    amount: safeAmount,
+    payment_method: params.paymentMethod,
+    upi_ref_id: params.upiRefId || '',
+    note: params.note || '',
+    settled_at: now,
+    from_profile: params.actorProfile,
+    to_profile: allProfiles.find((p) => p.id === params.toUserId),
+  };
+
+  allSettlements.unshift(newSettlement);
+  writeLocal(STORAGE_KEYS.SPLIT_SETTLEMENTS, allSettlements);
+
+  // Activity log
+  const act: SplitActivity = {
+    id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    split_group_id: params.groupId,
+    actor_user_id: params.fromUserId,
+    action_type: 'settle_debt',
+    target_user_id: params.toUserId,
+    old_value: null,
+    new_value: safeAmount.toString(),
+    description: `Settled ₹${safeAmount} via ${params.paymentMethod}${params.upiRefId ? ` (Ref: ${params.upiRefId})` : ''}`,
+    created_at: now,
+    actor: params.actorProfile,
+    target: allProfiles.find((p) => p.id === params.toUserId),
+  };
+  allActivity.unshift(act);
+  writeLocal(STORAGE_KEYS.SPLIT_ACTIVITY, allActivity);
+
+  emitLocalRealtime(params.groupId, 'settlement_added', { settlement: newSettlement });
+  return newSettlement;
 }
 
 export async function createSplitGroup(params: {

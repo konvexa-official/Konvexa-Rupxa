@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F2DE8B" />
+      <stop offset="50%" stop-color="#D4AF37" />
+      <stop offset="100%" stop-color="#8C6B1F" />
+    </linearGradient>
+    <linearGradient id="darkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181818" />
+      <stop offset="100%" stop-color="#0B0B0B" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#darkGrad)"/>
+  <circle cx="256" cy="256" r="210" fill="none" stroke="url(#goldGrad)" stroke-width="12" stroke-dasharray="8 6"/>
+  <circle cx="256" cy="256" r="190" fill="#111111" stroke="url(#goldGrad)" stroke-width="6"/>
+  <!-- Rupee Symbol -->
+  <path d="M 170 170 L 342 170 M 170 215 L 310 215 M 225 170 L 225 342 M 225 215 C 310 215, 310 295, 225 295 L 210 295 M 220 295 L 320 375" 
+        stroke="url(#goldGrad)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
