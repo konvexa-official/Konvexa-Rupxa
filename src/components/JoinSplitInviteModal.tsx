@@ -82,63 +82,55 @@ export const JoinSplitInviteModal: React.FC<JoinSplitInviteModalProps> = ({
     >
       <div
         id="join-split-invite-card"
-        className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl text-center transition-all ${
-          isDark
-            ? 'bg-[#0B0B0B] border-[#2A2926] text-white shadow-black/80'
-            : 'bg-white border-[#E6DFC8] text-black shadow-xl'
-        }`}
+        className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] p-6 shadow-2xl text-center transition-colors"
       >
-        <div className="w-14 h-14 rounded-2xl bg-[#D4AF37]/15 text-[#C59B27] flex items-center justify-center mx-auto mb-4 border border-[#D4AF37]/40">
+        <div className="w-14 h-14 rounded-2xl bg-[#B08D57]/15 text-[#B08D57] flex items-center justify-center mx-auto mb-4 border border-[#B08D57]/30">
           <Users className="w-7 h-7" />
         </div>
 
         {loading ? (
           <div className="py-6 space-y-3">
-            <div className="h-6 w-48 bg-[#E6DFC8]/50 rounded-lg mx-auto animate-pulse" />
-            <div className="h-4 w-32 bg-[#E6DFC8]/40 rounded-lg mx-auto animate-pulse" />
+            <div className="h-6 w-48 bg-[var(--surface-secondary)] rounded-lg mx-auto animate-pulse" />
+            <div className="h-4 w-32 bg-[var(--surface-secondary)] rounded-lg mx-auto animate-pulse" />
           </div>
         ) : error ? (
           <div className="py-4">
-            <div className="p-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs flex items-center justify-center gap-2 mb-4 font-bold">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs flex items-center justify-center gap-2 mb-4 font-semibold">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
               <span>{error}</span>
             </div>
             <button
               onClick={onDismiss}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-[#FAF8F5] text-black hover:border-[#D4AF37] border border-[#E6DFC8]"
+              className="px-4 py-2 rounded-xl text-xs font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] text-[var(--text-primary)] hover:border-[#B08D57] transition-colors"
             >
               Close
             </button>
           </div>
         ) : group ? (
           <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#8C6B1F] dark:text-[#E6CA65] block mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#B08D57] block mb-1">
               Group Invitation
             </span>
             <h2
-              className="text-xl font-black tracking-tight mb-1 text-black dark:text-white"
+              className="text-xl font-bold tracking-tight mb-1 text-[var(--text-primary)]"
               style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
               You&apos;ve been invited to join {group.name}
             </h2>
-            <p className="text-xs text-[#292524] dark:text-[#A6A29A] mb-6 font-medium">
-              Created by <span className="font-bold text-black dark:text-white">{creatorName}</span>
+            <p className="text-xs text-[var(--text-secondary)] mb-6 font-normal">
+              Created by <span className="font-semibold text-[var(--text-primary)]">{creatorName}</span>
             </p>
 
-            <div
-              className={`p-4 rounded-xl border mb-6 text-left ${
-                isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-[#FAF8F5] border-[#E6DFC8]'
-              }`}
-            >
+            <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface-secondary)] mb-6 text-left">
               <div className="flex justify-between items-center text-xs">
-                <span className="text-[#292524] dark:text-[#A6A29A] font-bold">Total Group Amount:</span>
-                <span className="font-black font-mono text-base text-[#8C6B1F] dark:text-[#E6CA65]">
+                <span className="text-[var(--text-secondary)] font-semibold">Total Group Amount:</span>
+                <span className="font-bold font-mono text-base text-[#B08D57]">
                   {formatCurrency(group.total_amount)}
                 </span>
               </div>
-              <div className="flex justify-between items-center text-xs mt-2 pt-2 border-t border-[#E6DFC8] dark:border-[#2A2926]">
-                <span className="text-[#292524] dark:text-[#A6A29A] font-bold">Currency:</span>
-                <span className="font-bold text-black dark:text-white">INR (₹)</span>
+              <div className="flex justify-between items-center text-xs mt-2 pt-2 border-t border-[var(--border)]">
+                <span className="text-[var(--text-secondary)] font-semibold">Currency:</span>
+                <span className="font-semibold text-[var(--text-primary)]">INR (₹)</span>
               </div>
             </div>
 
@@ -147,11 +139,7 @@ export const JoinSplitInviteModal: React.FC<JoinSplitInviteModalProps> = ({
                 type="button"
                 onClick={onDismiss}
                 disabled={joining}
-                className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors ${
-                  isDark
-                    ? 'border-[#2A2926] hover:bg-[#2A2926] text-[#A6A29A]'
-                    : 'border-[#E6DFC8] hover:bg-[#FAF8F5] text-black'
-                }`}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[#B08D57] transition-colors"
               >
                 Decline
               </button>
@@ -160,7 +148,7 @@ export const JoinSplitInviteModal: React.FC<JoinSplitInviteModalProps> = ({
                 type="button"
                 onClick={handleJoin}
                 disabled={joining}
-                className="px-6 py-2.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 shadow-sm flex items-center gap-2 transition-all disabled:opacity-50 border border-[#B38A22]/40"
+                className="px-6 py-2.5 rounded-xl text-xs font-bold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 active:scale-95 shadow-xs flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {joining ? (
                   <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />

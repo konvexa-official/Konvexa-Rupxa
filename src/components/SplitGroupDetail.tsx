@@ -16,6 +16,8 @@ import {
 import { formatCurrency, formatDateTime, formatTime, formatTimelineGroup, parseMoney } from '../lib/formatters';
 import { AddGroupExpenseModal } from './AddGroupExpenseModal';
 import { GroupExpenseDetailModal } from './GroupExpenseDetailModal';
+import { DeleteExpenseModal } from './DeleteExpenseModal';
+import { DeleteGroupModal } from './DeleteGroupModal';
 import { UpiSettlementModal } from './UpiSettlementModal';
 import { ShareSplitSummaryModal } from './ShareSplitSummaryModal';
 import { calculatePairwiseDebts, PairwiseDebt } from '../lib/upiUtils';
@@ -45,6 +47,8 @@ import {
   CheckCircle,
   Banknote,
   Send,
+  MoreVertical,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface SplitGroupDetailProps {
@@ -62,6 +66,16 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   const [expenses, setExpenses] = useState<GroupExpense[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isGroupDeleted, setIsGroupDeleted] = useState(false);
+
+  // Group settings dropdown & Delete group modal
+  const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false);
+  const [isDeleteGroupOpen, setIsDeleteGroupOpen] = useState(false);
+
+  // Individual expense menu & Delete expense modal
+  const [expenseMenuOpenId, setExpenseMenuOpenId] = useState<string | null>(null);
+  const [deleteTargetExpense, setDeleteTargetExpense] = useState<GroupExpense | null>(null);
+  const [isDeleteExpenseModalOpen, setIsDeleteExpenseModalOpen] = useState(false);
 
   // Add / Edit Group Expense Modal state
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -79,7 +93,35 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   // Group details edit modal (owner only)
   const [isEditingGroup, setIsEditingGroup] = useState(false);
   const [editGroupName, setEditGroupName] = useState('');
+  const [editGroupReference, setEditGroupReference] = useState('');
   const [editGroupTotal, setEditGroupTotal] = useState('');
+
+  // Save Member Share Amount
+  const handleSaveMemberAmount = async (targetUserId: string) => {
+    if (!user || !isOwner) return;
+    const parsedAmt = parseMoney(editAmountVal);
+    setAmountSubmitting(true);
+    setError(null);
+    try {
+      await updateMemberAmount({
+        groupId,
+        targetUserId,
+        newAmount: parsedAmt,
+        actorId: user.id,
+        actorProfile: user,
+      });
+      setEditingMemberId(null);
+      await fetchDetails();
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Failed to update member share amount.');
+      }
+    } finally {
+      setAmountSubmitting(false);
+    }
+  };
 
   // Add member modal
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
@@ -105,11 +147,18 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
     try {
       const data = await getSplitGroupDetails(groupId, user.id);
       if (data) {
-        setGroup(data.group);
-        setMembers(data.members);
-        setActivity(data.activity);
-        setExpenses(data.expenses || []);
-        setSettlements(data.settlements || []);
+        if (data.isDeleted || data.group.status === 'deleted') {
+          setIsGroupDeleted(true);
+        } else {
+          setIsGroupDeleted(false);
+          setGroup(data.group);
+          setMembers(data.members);
+          setActivity(data.activity);
+          setExpenses(data.expenses || []);
+          setSettlements(data.settlements || []);
+        }
+      } else {
+        setGroup(null);
       }
     } catch (err) {
       console.error('Failed to load group details:', err);
@@ -123,8 +172,16 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   useEffect(() => {
     fetchDetails();
 
-    const unsubscribe = subscribeToGroupUpdates(groupId, () => {
-      fetchDetails();
+    const unsubscribe = subscribeToGroupUpdates(groupId, (event) => {
+      if (
+        event?.type === 'GROUP_DELETED' ||
+        event?.type === 'group_deleted' ||
+        (event?.payload as any)?.status === 'deleted'
+      ) {
+        setIsGroupDeleted(true);
+      } else {
+        fetchDetails();
+      }
     });
 
     return () => {
@@ -133,13 +190,18 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
   }, [groupId, fetchDetails]);
 
   // Is current logged in user the owner/creator of the group?
-  const isOwner = Boolean(user && group && group.created_by === user.id);
+  const isOwner = Boolean(
+    user && group && (group.created_by === user.id || group.created_by?.toLowerCase() === user.id?.toLowerCase())
+  );
   const currentMember = members.find((m) => m.user_id === user?.id);
 
   // Calculate sum of group expenses
   const calculatedTotalExpenses = useMemo(() => {
-    return expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-  }, [expenses]);
+    if (expenses.length > 0) {
+      return parseMoney(expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0));
+    }
+    return group ? parseMoney(group.total_amount) : 0;
+  }, [expenses, group]);
 
   // Member balance calculation (including settlements)
   const memberBalances = useMemo(() => {
@@ -149,16 +211,28 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       balances[m.user_id] = { paid: 0, share: 0, net: 0 };
     });
 
-    expenses.forEach((exp) => {
-      if (balances[exp.paid_by_user_id]) {
-        balances[exp.paid_by_user_id].paid += exp.amount;
+    if (expenses.length === 0 && group && parseMoney(group.total_amount) > 0) {
+      // Upfront initial split total before individual bills are added
+      if (balances[group.created_by]) {
+        balances[group.created_by].paid = parseMoney(group.total_amount);
       }
-      exp.shares.forEach((share) => {
-        if (balances[share.user_id]) {
-          balances[share.user_id].share += share.amount;
+      members.forEach((m) => {
+        if (balances[m.user_id]) {
+          balances[m.user_id].share = parseMoney(m.amount);
         }
       });
-    });
+    } else {
+      expenses.forEach((exp) => {
+        if (balances[exp.paid_by_user_id]) {
+          balances[exp.paid_by_user_id].paid += exp.amount;
+        }
+        exp.shares.forEach((share) => {
+          if (balances[share.user_id]) {
+            balances[share.user_id].share += share.amount;
+          }
+        });
+      });
+    }
 
     settlements.forEach((s) => {
       if (balances[s.from_user_id]) {
@@ -177,12 +251,21 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
     });
 
     return balances;
-  }, [members, expenses, settlements]);
+  }, [members, expenses, settlements, group]);
 
   // Simplified pairwise debts (Who Owes Whom)
   const debts = useMemo(() => {
     return calculatePairwiseDebts(members, memberBalances);
   }, [members, memberBalances]);
+
+  // User specific debt aggregates
+  const myDebts = useMemo(() => {
+    if (!user) return { owe: 0, owed: 0, net: 0 };
+    const owe = debts.filter((d) => d.fromUserId === user.id).reduce((sum, d) => sum + d.amount, 0);
+    const owed = debts.filter((d) => d.toUserId === user.id).reduce((sum, d) => sum + d.amount, 0);
+    const net = memberBalances[user.id]?.net || 0;
+    return { owe, owed, net };
+  }, [debts, user, memberBalances]);
 
   // Handler to record a settlement
   const handleConfirmSettlement = async (params: {
@@ -335,6 +418,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         actorId: user.id,
         actorProfile: user,
         name: cleanName,
+        reference: editGroupReference.trim() || null,
         totalAmount: safeTotal,
       });
 
@@ -380,13 +464,39 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
     );
   }
 
+  if (isGroupDeleted || group?.status === 'deleted') {
+    return (
+      <div id="split-group-deleted-view" className="max-w-4xl mx-auto py-16 text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-amber-500/15 border border-amber-500/30 text-[#C59B27] flex items-center justify-center mx-auto mb-3">
+          <AlertTriangle className="w-6 h-6" />
+        </div>
+        <h2
+          className="text-xl font-black text-black dark:text-white"
+          style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+        >
+          This split group is no longer available.
+        </h2>
+        <button
+          id="back-to-splitter-btn"
+          type="button"
+          onClick={onBack}
+          className="mt-4 px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105 transition-all shadow-sm"
+        >
+          Back to Splitter
+        </button>
+      </div>
+    );
+  }
+
   if (!group) {
     return (
-      <div className="max-w-4xl mx-auto py-16 text-center">
+      <div id="split-group-not-found-view" className="max-w-4xl mx-auto py-16 text-center space-y-4">
         <p className="text-base font-bold text-black dark:text-white">Split group not found.</p>
         <button
+          id="back-to-splitter-btn"
+          type="button"
           onClick={onBack}
-          className="mt-4 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105"
+          className="mt-4 px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black hover:brightness-105 transition-all shadow-sm"
         >
           Back to Splitter
         </button>
@@ -407,23 +517,25 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           }`}
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Back to My Splits</span>
+          <span className="hidden sm:inline">Back to My Splits</span>
+          <span className="sm:hidden">Back</span>
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {/* Share Split Button */}
           <button
             id="share-split-modal-btn"
             type="button"
             onClick={() => setIsShareModalOpen(true)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+            className={`inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
               isDark
                 ? 'bg-[#0B0B0B] text-white border-[#2A2926] hover:border-[#6F5738]'
                 : 'bg-white text-black border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
             }`}
           >
             <Share2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
-            <span>Share Split</span>
+            <span className="hidden sm:inline">Share Split</span>
+            <span className="sm:hidden">Share</span>
           </button>
 
           {/* 1-Click WhatsApp & Social Summary Digest */}
@@ -431,36 +543,92 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
             id="share-whatsapp-digest-btn"
             type="button"
             onClick={() => setIsShareDigestOpen(true)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+            className={`inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
               isDark
                 ? 'bg-emerald-950/40 text-emerald-400 border-emerald-800/60 hover:bg-emerald-900/50'
                 : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
             }`}
           >
             <MessageCircle className="w-3.5 h-3.5 fill-current" />
-            <span>WhatsApp Digest</span>
+            <span className="hidden sm:inline">WhatsApp Digest</span>
+            <span className="sm:hidden">Digest</span>
           </button>
 
-          {/* If Owner: Edit Group Details */}
+          {/* If Owner: Quick Delete Split button & Group Settings Menu */}
           {isOwner && (
-            <button
-              id="edit-group-details-btn"
-              type="button"
-              onClick={() => {
-                setEditGroupName(group.name);
-                setEditGroupTotal(group.total_amount.toString());
-                setIsEditingGroup(true);
-              }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                isDark
-                  ? 'bg-[#0B0B0B] text-white border-[#2A2926] hover:border-[#6F5738]'
-                  : 'bg-white text-black border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
-              }`}
-            >
-              <Edit2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
-              <span>Edit Details</span>
-            </button>
-          )}
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              <button
+                id="header-delete-split-btn"
+                type="button"
+                onClick={() => setIsDeleteGroupOpen(true)}
+                className={`inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                  isDark
+                    ? 'border-rose-900/60 bg-rose-950/20 text-rose-400 hover:bg-rose-950/40'
+                    : 'border-rose-200 bg-rose-50/70 text-rose-700 hover:bg-rose-100 shadow-xs'
+                }`}
+                title="Delete this split group"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                <span className="hidden sm:inline">Delete Split</span>
+              </button>
+
+              <div className="relative">
+                <button
+                  id="group-settings-btn"
+                  type="button"
+                  onClick={() => setIsGroupMenuOpen(!isGroupMenuOpen)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                    isDark
+                      ? 'bg-[#0B0B0B] text-white border-[#2A2926] hover:border-[#6F5738]'
+                      : 'bg-white text-black border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
+                  }`}
+                >
+                  <MoreVertical className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
+                  <span>Settings</span>
+                </button>
+
+              {isGroupMenuOpen && (
+                <div
+                  id="group-settings-dropdown"
+                  className={`absolute right-0 mt-2 w-48 rounded-xl border p-1.5 shadow-xl z-30 ${
+                    isDark ? 'bg-[#151515] border-[#2A2926] text-white' : 'bg-white border-[#E6DFC8] text-black'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    id="edit-group-details-btn"
+                    onClick={() => {
+                      setIsGroupMenuOpen(false);
+                      setEditGroupName(group.name);
+                      setEditGroupReference(group.reference || '');
+                      setEditGroupTotal(group.total_amount.toString());
+                      setIsEditingGroup(true);
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                      isDark ? 'hover:bg-[#2A2926] text-white' : 'hover:bg-[#FAF8F5] text-black'
+                    }`}
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-[#C59B27]" />
+                    <span>Edit Details</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="open-delete-group-modal-btn"
+                    onClick={() => {
+                      setIsGroupMenuOpen(false);
+                      setIsDeleteGroupOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                    <span>Delete Group</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
           {/* If normal member: Leave Group */}
           {!isOwner && currentMember && (
@@ -481,13 +649,13 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       {error && (
         <div
           id="split-detail-error"
-          className="p-3.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs flex items-center justify-between font-bold animate-in fade-in"
+          className="p-3.5 rounded-xl border border-rose-300 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 text-xs flex items-center justify-between font-bold animate-in fade-in"
         >
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
             <span>{error}</span>
           </div>
-          <button onClick={() => setError(null)} className="text-black/60 hover:text-black">
+          <button onClick={() => setError(null)} className="text-rose-700 dark:text-rose-300 hover:text-rose-900 dark:hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -496,63 +664,64 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
       {/* 1. Group Page Header Card */}
       <div
         id="split-group-header-card"
-        className={`p-6 sm:p-7 rounded-2xl border transition-all ${
-          isDark
-            ? 'bg-[#0B0B0B] border-[#2A2926] text-white'
-            : 'bg-white border-[#E6DFC8] text-black shadow-xs'
-        }`}
+        className="p-4 sm:p-7 rounded-xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] shadow-xs transition-colors"
       >
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 pb-6 border-b border-[#E6DFC8] dark:border-[#2A2926]">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 sm:gap-6 pb-4 sm:pb-6 border-b border-[var(--border)]">
+          <div className="space-y-1.5 sm:space-y-2 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
               <span
-                className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                className={`text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
                   isOwner
-                    ? 'bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border-[#D4AF37]/40'
-                    : 'bg-[#FAF8F5] text-[#292524] border-[#E6DFC8] dark:bg-[#151515] dark:text-[#A6A29A] dark:border-[#2A2926]'
+                    ? 'bg-[#B08D57]/15 text-[#B08D57] border-[#B08D57]/30'
+                    : 'bg-[var(--surface-secondary)] text-[var(--text-secondary)] border-[var(--border)]'
                 }`}
               >
                 {isOwner ? 'Created by you (Owner)' : 'Member'}
               </span>
-              <span className="text-xs text-[#292524] dark:text-[#A6A29A] flex items-center gap-1 font-semibold">
-                <Users className="w-3.5 h-3.5 text-[#C59B27]" />
+              <span className="text-[11px] sm:text-xs text-[var(--text-secondary)] flex items-center gap-1 font-medium">
+                <Users className="w-3.5 h-3.5 text-[#B08D57]" />
                 <span>{members.length} members</span>
               </span>
-              <span className="text-xs text-[#292524] dark:text-[#A6A29A] flex items-center gap-1 font-semibold">
-                <Receipt className="w-3.5 h-3.5 text-[#C59B27]" />
+              <span className="text-[11px] sm:text-xs text-[var(--text-secondary)] flex items-center gap-1 font-medium">
+                <Receipt className="w-3.5 h-3.5 text-[#B08D57]" />
                 <span>{expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'}</span>
               </span>
             </div>
 
-            <h1
-              className="text-2xl sm:text-3xl font-black tracking-tight text-black dark:text-white"
-              style={{ fontFamily: 'Space Grotesk, sans-serif' }}
-            >
-              {group.name}
-            </h1>
-            <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
-              Shared expenses, real-time recalculation & transparent split contributions
-            </p>
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <h1
+                className="text-xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] break-words"
+                style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+              >
+                {group.name}
+              </h1>
+              {group.reference && (
+                <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-[11px] sm:text-xs font-semibold bg-[#B08D57]/15 text-[#B08D57] border border-[#B08D57]/30 truncate max-w-xs">
+                  Ref: {group.reference}
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="text-left sm:text-right bg-[#FAF8F5] dark:bg-[#151515]/60 p-4 rounded-xl border border-[#E6DFC8] dark:border-[#2A2926] sm:min-w-[200px]">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#292524] dark:text-[#A6A29A] block mb-1">
+          <div className="text-left sm:text-right bg-[var(--surface-secondary)] p-3 sm:p-4 rounded-xl border border-[var(--border)] sm:min-w-[180px]">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)] block mb-0.5 sm:mb-1">
               Total Expenses
             </span>
             <span
               id="group-total-expenses-display"
-              className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-[#8C6B1F] dark:text-[#E6CA65]"
+              className="text-xl sm:text-3xl font-bold font-mono tracking-tight text-[#B08D57]"
+              style={{ fontFamily: 'Space Grotesk, monospace' }}
             >
               {formatCurrency(calculatedTotalExpenses)}
             </span>
-            <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] block mt-1 font-medium">
-              {expenses.length === 0 ? 'No expenses added yet' : `Calculated across ${expenses.length} bills`}
+            <span className="text-[10px] sm:text-[11px] text-[var(--text-secondary)] block mt-0.5 sm:mt-1 font-normal truncate">
+              {expenses.length === 0 ? 'No expenses yet' : `${expenses.length} recorded bills`}
             </span>
           </div>
         </div>
 
         {/* Action Buttons Bar */}
-        <div className="pt-5 flex flex-wrap items-center gap-3">
+        <div className="pt-3.5 sm:pt-5 flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             id="add-expense-main-btn"
             type="button"
@@ -560,9 +729,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setEditingExpense(null);
               setIsAddExpenseOpen(true);
             }}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 transition-all shadow-sm border border-[#B38A22]/40"
+            className="inline-flex items-center justify-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 active:scale-95 transition-all shadow-xs"
           >
-            <Plus className="w-4 h-4 stroke-[3]" />
+            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
             <span>+ Add Expense</span>
           </button>
 
@@ -575,51 +744,125 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setSearchResult(null);
               setSearchAttempted(false);
             }}
-            className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold border transition-all ${
-              isDark
-                ? 'border-[#2A2926] bg-[#151515] hover:border-[#6F5738] text-white'
-                : 'border-[#E6DFC8] bg-white hover:border-[#D4AF37] text-black shadow-xs'
-            }`}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] text-[var(--text-primary)] transition-all shadow-xs"
           >
-            <Plus className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65] stroke-[3]" />
+            <Plus className="w-3.5 h-3.5 text-[#B08D57] stroke-[2.5]" />
             <span>+ Add Member</span>
           </button>
+
+          {/* Edit Split button for Owner */}
+          {isOwner && (
+            <button
+              id="edit-split-hero-btn"
+              type="button"
+              onClick={() => {
+                setEditGroupName(group.name);
+                setEditGroupReference(group.reference || '');
+                setEditGroupTotal(group.total_amount.toString());
+                setIsEditingGroup(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] text-[var(--text-primary)] transition-all shadow-xs"
+            >
+              <Edit2 className="w-3.5 h-3.5 text-[#B08D57]" />
+              <span>Edit Split</span>
+            </button>
+          )}
 
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
-            className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold border transition-all ${
-              isDark
-                ? 'border-[#2A2926] bg-[#151515] hover:border-[#6F5738] text-white'
-                : 'border-[#E6DFC8] bg-white hover:border-[#D4AF37] text-black shadow-xs'
-            }`}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] text-[var(--text-primary)] transition-all shadow-xs"
           >
-            <Share2 className="w-3.5 h-3.5 text-[#8C6B1F] dark:text-[#E6CA65]" />
+            <Share2 className="w-3.5 h-3.5 text-[#B08D57]" />
             <span>Invite Link</span>
           </button>
+        </div>
+      </div>
+
+      {/* Balance Summary Section (Section 17 requirement: You owe, You are owed, Net balance) */}
+      <div id="split-balance-kpi-section" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* You Owe */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] shadow-xs">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+              You Owe
+            </span>
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+          </div>
+          <span
+            className="text-xl font-bold font-mono tracking-tight text-amber-600 dark:text-amber-400 block"
+            style={{ fontFamily: 'Space Grotesk, monospace' }}
+          >
+            {formatCurrency(myDebts.owe)}
+          </span>
+          <span className="text-[10px] text-[var(--text-secondary)] mt-0.5 block">
+            {myDebts.owe > 0 ? 'To group members' : 'No pending dues'}
+          </span>
+        </div>
+
+        {/* You Are Owed */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] shadow-xs">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+              You Are Owed
+            </span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          </div>
+          <span
+            className="text-xl font-bold font-mono tracking-tight text-emerald-600 dark:text-emerald-400 block"
+            style={{ fontFamily: 'Space Grotesk, monospace' }}
+          >
+            {formatCurrency(myDebts.owed)}
+          </span>
+          <span className="text-[10px] text-[var(--text-secondary)] mt-0.5 block">
+            {myDebts.owed > 0 ? 'To be received' : 'Nothing owed to you'}
+          </span>
+        </div>
+
+        {/* Net Balance */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] shadow-xs">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+              Net Balance
+            </span>
+            <span className={`w-2 h-2 rounded-full ${myDebts.net > 0 ? 'bg-emerald-500' : myDebts.net < 0 ? 'bg-amber-500' : 'bg-[var(--text-muted)]'}`} />
+          </div>
+          <span
+            className={`text-xl font-bold font-mono tracking-tight block ${
+              myDebts.net > 0
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : myDebts.net < 0
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-[var(--text-primary)]'
+            }`}
+            style={{ fontFamily: 'Space Grotesk, monospace' }}
+          >
+            {myDebts.net > 0 ? `+${formatCurrency(myDebts.net)}` : myDebts.net < 0 ? `-${formatCurrency(Math.abs(myDebts.net))}` : '₹0.00'}
+          </span>
+          <span className="text-[10px] text-[var(--text-secondary)] mt-0.5 block">
+            {myDebts.net > 0 ? 'Overall in credit' : myDebts.net < 0 ? 'Overall in debit' : 'Completely settled'}
+          </span>
         </div>
       </div>
 
       {/* 2. Group Expenses Section */}
       <div
         id="split-expenses-section"
-        className={`rounded-2xl border p-5 sm:p-6 transition-all ${
-          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-white border-[#E6DFC8] shadow-xs'
-        }`}
+        className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 shadow-xs transition-colors"
       >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#C59B27] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-[#B08D57]/15 border border-[#B08D57]/30 text-[#B08D57] flex items-center justify-center">
               <Receipt className="w-4 h-4" />
             </div>
             <div>
               <h2
-                className="text-lg font-black tracking-tight text-black dark:text-white"
+                className="text-lg font-bold tracking-tight text-[var(--text-primary)]"
                 style={{ fontFamily: 'Space Grotesk, sans-serif' }}
               >
                 Group Expenses ({expenses.length})
               </h2>
-              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
+              <p className="text-xs text-[var(--text-secondary)] font-normal">
                 All expenses logged inside {group.name}
               </p>
             </div>
@@ -632,9 +875,9 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               setEditingExpense(null);
               setIsAddExpenseOpen(true);
             }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 shadow-xs transition-all border border-[#B38A22]/40"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 shadow-xs transition-all"
           >
-            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>Add Expense</span>
           </button>
         </div>
@@ -643,20 +886,18 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         {expenses.length === 0 ? (
           <div
             id="empty-expenses-state"
-            className={`py-12 px-4 rounded-xl border border-dashed text-center flex flex-col items-center justify-center ${
-              isDark ? 'border-[#2A2926] bg-[#151515]/30' : 'border-[#E6DFC8] bg-[#FAF8F5]'
-            }`}
+            className="py-12 px-4 rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface-secondary)] text-center flex flex-col items-center justify-center"
           >
-            <div className="w-12 h-12 rounded-2xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#C59B27] mb-3">
+            <div className="w-12 h-12 rounded-2xl bg-[#B08D57]/15 border border-[#B08D57]/30 flex items-center justify-center text-[#B08D57] mb-3">
               <Receipt className="w-6 h-6" />
             </div>
             <h3
-              className="text-base font-black text-black dark:text-white mb-1"
+              className="text-base font-bold text-[var(--text-primary)] mb-1"
               style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
               No expenses added yet
             </h3>
-            <p className="text-xs text-[#292524] dark:text-[#A6A29A] max-w-sm mb-4 font-medium">
+            <p className="text-xs text-[var(--text-secondary)] max-w-sm mb-4 font-normal">
               Add meals, travel, hotel, parking, or tickets. You can add unlimited expenses inside this group.
             </p>
             <button
@@ -665,26 +906,29 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                 setEditingExpense(null);
                 setIsAddExpenseOpen(true);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 transition-colors border border-[#B38A22]/40"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 transition-colors shadow-xs"
             >
-              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>+ Add First Expense</span>
             </button>
           </div>
         ) : (
           <div className="space-y-2.5">
             {expenses.map((exp) => {
+              const isPaidByMe = exp.paid_by_user_id === user?.id;
               const paidByMember = members.find((m) => m.user_id === exp.paid_by_user_id);
               const paidByName =
+                (isPaidByMe ? (user?.full_name || 'You') : null) ||
                 exp.paid_by_profile?.full_name ||
                 paidByMember?.profile?.full_name ||
-                'Member';
-              const isPaidByMe = exp.paid_by_user_id === user?.id;
+                (isPaidByMe ? 'You' : 'Member');
 
-              const rawRef = exp.reference !== undefined && exp.reference !== null
-                ? exp.reference.trim()
-                : (exp.name && exp.name.trim() !== 'Expense' && exp.name.trim() !== 'Untitled' ? exp.name.trim() : '');
-              const hasReference = Boolean(rawRef);
+              const rawName = exp.name?.trim();
+              const rawRef = exp.reference?.trim() || null;
+              const expTitle = rawName && rawName !== 'Expense' && rawName !== 'Untitled'
+                ? rawName
+                : (rawRef || `${exp.category} Expense`);
+              const hasRef = Boolean(rawRef);
 
               const formattedDateTime = exp.created_at
                 ? formatDateTime(exp.created_at)
@@ -698,40 +942,39 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                     setSelectedDetailExpense(exp);
                     setIsDetailExpenseOpen(true);
                   }}
-                  className={`p-4 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all ${
-                    isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] hover:border-[#6F5738]'
-                      : 'bg-[#FAF8F5] border-[#E6DFC8] hover:border-[#D4AF37] shadow-xs'
-                  }`}
+                  className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] flex items-center justify-between gap-4 cursor-pointer transition-all shadow-xs"
                 >
                   <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#C59B27] shrink-0 mt-0.5">
+                    <div className="w-10 h-10 rounded-xl bg-[#B08D57]/15 border border-[#B08D57]/30 flex items-center justify-center text-[#B08D57] shrink-0 mt-0.5">
                       <Receipt className="w-5 h-5" />
                     </div>
 
                     <div className="min-w-0 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {hasReference && (
-                          <span className="font-black text-sm text-black dark:text-white truncate">
-                            {rawRef}
-                          </span>
-                        )}
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#D4AF37]/15 text-[#8C6B1F] dark:text-[#E6CA65] border border-[#D4AF37]/30">
+                        <span className="font-bold text-sm text-[var(--text-primary)] truncate">
+                          {expTitle}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#B08D57]/15 text-[#B08D57] border border-[#B08D57]/30">
                           {exp.category}
                         </span>
+                        {hasRef && rawRef !== expTitle && (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--border)] truncate max-w-xs">
+                            Ref: {rawRef}
+                          </span>
+                        )}
                       </div>
 
-                      <div className="flex items-center gap-3 text-[11px] text-[#292524] dark:text-[#A6A29A] flex-wrap font-medium">
+                      <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)] flex-wrap font-medium">
                         <span className="flex items-center gap-1">
-                          <CreditCard className="w-3 h-3 text-[#C59B27]" />
+                          <CreditCard className="w-3 h-3 text-[#B08D57]" />
                           <span>
-                            Paid by <strong className="font-bold text-black dark:text-white">{paidByName}</strong>
+                            Paid by <strong className="font-semibold text-[var(--text-primary)]">{paidByName}</strong>
                             {isPaidByMe && ' (You)'}
                           </span>
                         </span>
                         <span>•</span>
                         <span className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-[#C59B27]" />
+                          <Calendar className="w-3 h-3 text-[#B08D57]" />
                           <span>{formattedDateTime}</span>
                         </span>
                         <span>•</span>
@@ -742,17 +985,72 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                     <div className="text-right">
-                      <span className="text-base sm:text-lg font-black font-mono tracking-tight text-[#8C6B1F] dark:text-[#E6CA65] block">
+                      <span
+                        className="text-base sm:text-lg font-bold font-mono tracking-tight text-[#B08D57] block"
+                        style={{ fontFamily: 'Space Grotesk, monospace' }}
+                      >
                         {formatCurrency(exp.amount)}
                       </span>
-                      <span className="text-[10px] text-[#292524] dark:text-[#A6A29A] font-medium">
+                      <span className="text-[10px] text-[var(--text-muted)] font-normal">
                         Click for breakdown
                       </span>
                     </div>
 
-                    <ChevronRight className="w-4 h-4 text-[#8C6B1F] dark:text-[#A6A29A]" />
+                    {/* Expense row actions menu ⋮ */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        id={`expense-actions-btn-${exp.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpenseMenuOpenId(expenseMenuOpenId === exp.id ? null : exp.id);
+                        }}
+                        className="p-1.5 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[#B08D57] transition-colors"
+                        title="Expense options"
+                      >
+                        <MoreVertical className="w-3.5 h-3.5" />
+                      </button>
+
+                      {expenseMenuOpenId === exp.id && (
+                        <div
+                          id={`expense-menu-dropdown-${exp.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 top-full mt-1 w-32 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] p-1 shadow-xl z-20"
+                        >
+                          <button
+                            type="button"
+                            id={`expense-row-edit-${exp.id}`}
+                            onClick={() => {
+                              setExpenseMenuOpenId(null);
+                              setEditingExpense(exp);
+                              setIsAddExpenseOpen(true);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold hover:bg-[var(--surface-secondary)] transition-colors"
+                          >
+                            <Edit2 className="w-3.5 h-3.5 text-[#B08D57]" />
+                            <span>Edit</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            id={`expense-row-delete-${exp.id}`}
+                            onClick={() => {
+                              setExpenseMenuOpenId(null);
+                              setDeleteTargetExpense(exp);
+                              setIsDeleteExpenseModalOpen(true);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-500/10 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />
                   </div>
                 </div>
               );
@@ -760,6 +1058,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           </div>
         )}
       </div>
+
 
       {/* 3. Members Section */}
       <div
@@ -806,8 +1105,15 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {members.map((member) => {
             const isSelf = member.user_id === user?.id;
-            const displayName = member.profile?.full_name || (isSelf ? user?.full_name : 'Member');
-            const contactIdentifier = member.profile?.email || member.profile?.phone || '';
+            const displayName =
+              (isSelf ? (user?.full_name || 'You') : null) ||
+              member.profile?.full_name ||
+              (isSelf ? 'You' : 'Member');
+            const contactIdentifier =
+              (isSelf ? (user?.email || user?.phone) : null) ||
+              member.profile?.email ||
+              member.profile?.phone ||
+              '';
             const bal = memberBalances[member.user_id] || { paid: 0, share: member.amount, net: 0 };
 
             return (
@@ -860,7 +1166,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                         type="button"
                         onClick={() => handleRemoveMember(member.user_id)}
                         title="Remove member"
-                        className="p-1 rounded text-rose-600 hover:bg-rose-50 transition-colors"
+                        className="p-1 rounded text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -879,9 +1185,58 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
 
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-[#292524] dark:text-[#A6A29A] font-semibold">Share of Expenses:</span>
-                    <span className="font-mono font-bold text-black dark:text-white">
-                      {formatCurrency(bal.share)}
-                    </span>
+                    {isOwner && editingMemberId === member.user_id ? (
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative">
+                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] font-black text-[#8C6B1F] dark:text-[#E6CA65]">
+                            ₹
+                          </span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={editAmountVal}
+                            onChange={(e) => setEditAmountVal(e.target.value)}
+                            className="w-20 pl-4 pr-1 py-0.5 rounded border text-xs font-mono font-bold bg-white dark:bg-[#151515] text-black dark:text-white border-[#D4AF37] outline-none"
+                            autoFocus
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveMemberAmount(member.user_id)}
+                          disabled={amountSubmitting}
+                          className="px-2 py-0.5 rounded text-[10px] font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] text-black disabled:opacity-50"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingMemberId(null)}
+                          className="px-1.5 py-0.5 rounded text-[10px] text-black/60 dark:text-[#A6A29A] hover:text-black dark:hover:text-white"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-black dark:text-white">
+                          {formatCurrency(bal.share)}
+                        </span>
+                        {isOwner && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMemberId(member.user_id);
+                              setEditAmountVal(bal.share.toString());
+                            }}
+                            title="Edit split share"
+                            className="p-1 rounded text-[#8C6B1F] dark:text-[#E6CA65] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Net status */}
@@ -1158,6 +1513,15 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                               </span>
                             </div>
 
+                            {act.expense_name && (
+                              <div>
+                                <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Expense:</span>
+                                <span className="font-bold text-black dark:text-white">
+                                  {act.expense_name}
+                                </span>
+                              </div>
+                            )}
+
                             {act.old_value && (
                               <div>
                                 <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Amount:</span>
@@ -1180,10 +1544,50 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                               <div className="sm:col-span-2">
                                 <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Explanation:</span>
                                 <p className="font-medium text-black dark:text-white italic">
-                                  "{act.deletion_note}"
+                                  &quot;{act.deletion_note}&quot;
                                 </p>
                               </div>
                             )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (act.action_type === 'delete_group') {
+                      return (
+                        <div
+                          key={act.id}
+                          id={`activity-item-${act.id}`}
+                          className={`p-3.5 rounded-xl border text-xs space-y-2.5 transition-all ${
+                            isDark ? 'bg-[#151515] border-rose-900/40 text-white' : 'bg-rose-50/40 border-rose-200 text-black'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                              <span className="font-black text-xs text-rose-700 dark:text-rose-400">
+                                Group deleted
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] font-mono font-medium">
+                              {formatTime(act.created_at)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1 border-t border-rose-200/50 dark:border-rose-900/40">
+                            <div>
+                              <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Deleted by:</span>
+                              <span className="font-bold text-black dark:text-white">
+                                {act.actor?.full_name || 'Group Owner'}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[#292524] dark:text-[#A6A29A] font-semibold block">Group name:</span>
+                              <span className="font-bold text-black dark:text-white">
+                                {act.old_value || group?.name || 'Split Group'}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1263,6 +1667,42 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
         )}
       </div>
 
+      {/* 6. Danger Zone Section (for group owner) */}
+      {isOwner && (
+        <div
+          id="split-danger-zone"
+          className={`rounded-2xl border p-5 sm:p-6 transition-all ${
+            isDark ? 'bg-[#151212] border-rose-950/60' : 'bg-rose-50/40 border-rose-200 shadow-xs'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <h3
+                  className="text-base font-black text-rose-700 dark:text-rose-400"
+                  style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+                >
+                  Danger Zone: Delete Split Group
+                </h3>
+              </div>
+              <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium max-w-xl">
+                Permanently delete &ldquo;{group.name}&rdquo;. This will archive the group, remove active access for all members, and halt balance tracking. This action cannot be undone.
+              </p>
+            </div>
+            <button
+              type="button"
+              id="danger-zone-delete-group-btn"
+              onClick={() => setIsDeleteGroupOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 transition-all shadow-sm shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Split Group</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Add / Edit Expense Modal */}
       <AddGroupExpenseModal
         isOpen={isAddExpenseOpen}
@@ -1315,7 +1755,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               <button
                 type="button"
                 onClick={() => setIsShareModalOpen(false)}
-                className="text-black/60 dark:text-[#A6A29A] hover:text-black transition-colors"
+                className="text-black/60 dark:text-[#A6A29A] hover:text-black dark:hover:text-white transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1384,7 +1824,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               <button
                 type="button"
                 onClick={() => setIsAddMemberOpen(false)}
-                className="text-black/60 dark:text-[#A6A29A] hover:text-black transition-colors"
+                className="text-black/60 dark:text-[#A6A29A] hover:text-black dark:hover:text-white transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1512,7 +1952,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
               <button
                 type="button"
                 onClick={() => setIsEditingGroup(false)}
-                className="text-black/60 dark:text-[#A6A29A] hover:text-black transition-colors"
+                className="text-black/60 dark:text-[#A6A29A] hover:text-black dark:hover:text-white transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1527,6 +1967,28 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                   type="text"
                   value={editGroupName}
                   onChange={(e) => setEditGroupName(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-xl text-xs font-medium border outline-none ${
+                    isDark
+                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
+                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37] focus:bg-white'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-white">
+                    Reference / Description
+                  </label>
+                  <span className="text-[10px] text-[#A6A29A] font-semibold uppercase tracking-wider">
+                    Optional
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="What is this split for?"
+                  value={editGroupReference}
+                  onChange={(e) => setEditGroupReference(e.target.value)}
                   className={`w-full px-3 py-2 rounded-xl text-xs font-medium border outline-none ${
                     isDark
                       ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
@@ -1559,7 +2021,7 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
                   onClick={() => setIsEditingGroup(false)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
                     isDark
-                      ? 'border-[#2A2926] text-[#A6A29A] hover:bg-[#2A2926]'
+                      ? 'border-[#2A2926] text-[#A6A29A] hover:bg-[#2A2926] hover:text-white'
                       : 'border-[#E6DFC8] text-black hover:bg-[#FAF8F5]'
                   }`}
                 >
@@ -1621,6 +2083,33 @@ export const SplitGroupDetail: React.FC<SplitGroupDetailProps> = ({ groupId, onB
           isDark={isDark}
         />
       )}
+
+      {/* Delete Split Group Confirmation Modal */}
+      {group && (
+        <DeleteGroupModal
+          isOpen={isDeleteGroupOpen}
+          onClose={() => setIsDeleteGroupOpen(false)}
+          groupId={group.id}
+          groupName={group.name}
+          onDeleted={() => {
+            onBack();
+          }}
+        />
+      )}
+
+      {/* Delete Expense Confirmation Modal */}
+      <DeleteExpenseModal
+        isOpen={isDeleteExpenseModalOpen}
+        onClose={() => {
+          setIsDeleteExpenseModalOpen(false);
+          setDeleteTargetExpense(null);
+        }}
+        expense={deleteTargetExpense}
+        groupId={groupId}
+        onDeleted={() => {
+          fetchDetails();
+        }}
+      />
     </div>
   );
 };

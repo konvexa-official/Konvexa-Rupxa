@@ -301,7 +301,7 @@ export const BudgetSettingsModal: React.FC<BudgetSettingsModalProps> = ({
                             type="button"
                             onClick={() => handleClearCategory(cat)}
                             title="Clear target"
-                            className="p-1 rounded text-black/60 dark:text-[#A6A29A] hover:text-black hover:bg-[#FAF8F5] transition-colors"
+                            className="p-1 rounded text-black/60 dark:text-[#A6A29A] hover:text-black dark:hover:text-white hover:bg-[#FAF8F5] dark:hover:bg-[#2A2926] transition-colors"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -322,7 +322,7 @@ export const BudgetSettingsModal: React.FC<BudgetSettingsModalProps> = ({
             onClick={() => {
               setBudgetInputs({});
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-black/70 dark:text-[#A6A29A] hover:text-black dark:hover:text-white hover:bg-[#FAF8F5] transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-black/70 dark:text-[#A6A29A] hover:text-black dark:hover:text-white hover:bg-[#FAF8F5] dark:hover:bg-[#2A2926] transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5 text-[#C59B27]" />
             <span>Clear All Targets</span>
@@ -332,7 +332,7 @@ export const BudgetSettingsModal: React.FC<BudgetSettingsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-bold border border-[#E6DFC8] dark:border-[#2A2926] hover:bg-[#FAF8F5] text-black dark:text-[#A6A29A] transition-colors"
+              className="px-4 py-2 rounded-xl text-xs font-bold border border-[#E6DFC8] dark:border-[#2A2926] hover:bg-[#FAF8F5] dark:hover:bg-[#2A2926] text-black dark:text-[#A6A29A] dark:hover:text-white transition-colors"
             >
               Cancel
             </button>

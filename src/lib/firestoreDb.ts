@@ -208,18 +208,38 @@ export async function fsGetMySplitGroups(userId: string): Promise<SplitGroupSumm
 
     const userMember = members.find((m) => m.user_id === userId);
     const isCreator = gData.created_by === userId;
+    if (gData.status === 'deleted' || Boolean((gData as any).deleted_at)) continue;
 
     if (isCreator || userMember) {
       const userRole: 'owner' | 'member' = isCreator ? 'owner' : 'member';
-      const userAmount = userMember ? userMember.amount : isCreator ? gData.total_amount : 0;
+
+      const expensesSnap = await getDocs(collection(db, 'split_groups', gDoc.id, 'expenses')).catch(() => ({ docs: [] }));
+      const activeExpenses = expensesSnap.docs
+        .map((d) => d.data() as GroupExpense)
+        .filter((e) => !e.deleted_at);
+
+      const calculatedTotal = activeExpenses.length > 0
+        ? parseMoney(activeExpenses.reduce((sum, e) => sum + parseMoney(e.amount), 0))
+        : parseMoney(gData.total_amount);
+
+      const calculatedUserAmount = activeExpenses.length > 0
+        ? parseMoney(
+            activeExpenses.reduce((sum, e) => {
+              const sh = e.shares?.find((s) => s.user_id === userId);
+              return sum + (sh ? parseMoney(sh.amount) : 0);
+            }, 0)
+          )
+        : userMember
+        ? parseMoney(userMember.amount)
+        : 0;
 
       summaries.push({
         ...gData,
         id: gDoc.id,
-        total_amount: parseMoney(gData.total_amount),
-        member_count: members.length,
+        total_amount: calculatedTotal,
+        member_count: Math.max(members.length, 1),
         user_role: userRole,
-        user_amount: parseMoney(userAmount),
+        user_amount: calculatedUserAmount,
       });
     }
   }
@@ -236,20 +256,64 @@ export async function fsGetSplitGroupDetails(
   activity: SplitActivity[];
   expenses: GroupExpense[];
   settlements: SplitSettlement[];
+  isDeleted?: boolean;
 } | null> {
   if (!isFirebaseConfigured() || !db) return null;
 
-  const gDoc = await getDoc(doc(db, 'split_groups', groupId));
-  if (!gDoc.exists()) return null;
+  const cleanGroupId = decodeURIComponent((groupId || '').trim());
+  if (!cleanGroupId) return null;
 
-  const group = { ...(gDoc.data() as SplitGroup), id: gDoc.id };
+  let gDoc = await getDoc(doc(db, 'split_groups', cleanGroupId));
+  if (!gDoc.exists()) {
+    const allGroupsSnap = await getDocs(collection(db, 'split_groups')).catch(() => ({ docs: [] }));
+    const foundDoc = allGroupsSnap.docs.find(
+      (d) => d.id === cleanGroupId || d.id.toLowerCase() === cleanGroupId.toLowerCase()
+    );
+    if (foundDoc) {
+      gDoc = foundDoc;
+    } else {
+      return null;
+    }
+  }
+
+  const groupData = gDoc.data() as SplitGroup;
+  const isDeleted = groupData.status === 'deleted' || Boolean((groupData as any).deleted_at);
+
+  if (isDeleted) {
+    return {
+      group: { ...groupData, id: gDoc.id, status: 'deleted' },
+      members: [],
+      activity: [],
+      expenses: [],
+      settlements: [],
+      isDeleted: true,
+    };
+  }
+
+  const group = { ...groupData, id: gDoc.id };
+  const targetGroupId = gDoc.id;
 
   const [membersSnap, expensesSnap, activitiesSnap, settlementsSnap, profilesSnap] = await Promise.all([
-    getDocs(collection(db, 'split_groups', groupId, 'members')),
-    getDocs(collection(db, 'split_groups', groupId, 'expenses')),
-    getDocs(collection(db, 'split_groups', groupId, 'activities')),
-    getDocs(collection(db, 'split_groups', groupId, 'settlements')),
-    getDocs(collection(db, 'users')),
+    getDocs(collection(db, 'split_groups', targetGroupId, 'members')).catch((err) => {
+      console.warn('Could not read members for group:', err);
+      return { docs: [] };
+    }),
+    getDocs(collection(db, 'split_groups', targetGroupId, 'expenses')).catch((err) => {
+      console.warn('Could not read expenses for group:', err);
+      return { docs: [] };
+    }),
+    getDocs(collection(db, 'split_groups', targetGroupId, 'activities')).catch((err) => {
+      console.warn('Could not read activities for group:', err);
+      return { docs: [] };
+    }),
+    getDocs(collection(db, 'split_groups', targetGroupId, 'settlements')).catch((err) => {
+      console.warn('Could not read settlements for group:', err);
+      return { docs: [] };
+    }),
+    getDocs(collection(db, 'users')).catch((err) => {
+      console.warn('Could not read profiles for group:', err);
+      return { docs: [] };
+    }),
   ]);
 
   const profilesMap = new Map<string, Profile>();
@@ -259,26 +323,28 @@ export async function fsGetSplitGroupDetails(
 
   const members: SplitMember[] = membersSnap.docs.map((d) => {
     const memData = d.data() as SplitMember;
+    const profile = profilesMap.get(memData.user_id) || memData.profile;
     return {
       ...memData,
       id: d.id,
       amount: parseMoney(memData.amount),
-      profile: profilesMap.get(memData.user_id),
+      profile,
     };
   });
 
   const expenses: GroupExpense[] = expensesSnap.docs
     .map((d) => {
       const expData = d.data() as GroupExpense;
+      const paidByProfile = profilesMap.get(expData.paid_by_user_id) || expData.paid_by_profile;
       return {
         ...expData,
         id: d.id,
         amount: parseMoney(expData.amount),
-        paid_by_profile: profilesMap.get(expData.paid_by_user_id),
+        paid_by_profile: paidByProfile,
         shares: (expData.shares || []).map((s) => ({
           ...s,
           amount: parseMoney(s.amount),
-          profile: profilesMap.get(s.user_id),
+          profile: profilesMap.get(s.user_id) || s.profile,
         })),
       };
     })
@@ -290,8 +356,8 @@ export async function fsGetSplitGroupDetails(
       ...sData,
       id: d.id,
       amount: parseMoney(sData.amount),
-      from_profile: profilesMap.get(sData.from_user_id),
-      to_profile: profilesMap.get(sData.to_user_id),
+      from_profile: profilesMap.get(sData.from_user_id) || sData.from_profile,
+      to_profile: profilesMap.get(sData.to_user_id) || sData.to_profile,
     };
   });
 
@@ -300,8 +366,8 @@ export async function fsGetSplitGroupDetails(
     return {
       ...actData,
       id: d.id,
-      actor: profilesMap.get(actData.actor_user_id),
-      target: actData.target_user_id ? profilesMap.get(actData.target_user_id) : undefined,
+      actor: profilesMap.get(actData.actor_user_id) || actData.actor,
+      target: actData.target_user_id ? (profilesMap.get(actData.target_user_id) || actData.target) : undefined,
     };
   });
 
@@ -364,10 +430,12 @@ export async function fsRecordSettlement(params: {
 
 export async function fsCreateSplitGroup(params: {
   name: string;
+  reference?: string | null;
   totalAmount: number;
   currency: string;
   creatorId: string;
   creatorProfile: Profile;
+  splitType?: 'equal' | 'custom';
   members: Array<{ userId: string; amount: number; profile?: Profile }>;
 }): Promise<SplitGroup> {
   if (!isFirebaseConfigured() || !db) throw new Error('Firestore is not configured.');
@@ -375,6 +443,8 @@ export async function fsCreateSplitGroup(params: {
   const now = new Date().toISOString();
   const groupId = `grp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   const safeTotal = parseMoney(params.totalAmount);
+  const cleanName = params.name.trim();
+  const cleanRef = params.reference?.trim() ? params.reference.trim() : null;
 
   const memberList = [...params.members];
   if (!memberList.some((m) => m.userId === params.creatorId)) {
@@ -385,9 +455,19 @@ export async function fsCreateSplitGroup(params: {
     });
   }
 
+  // If equal split and safeTotal > 0, rebalance shares equally so each member has the exact share
+  if ((!params.splitType || params.splitType === 'equal') && safeTotal > 0 && memberList.length > 0) {
+    const perPerson = Math.floor((safeTotal / memberList.length) * 100) / 100;
+    const remainder = parseMoney(safeTotal - perPerson * memberList.length);
+    memberList.forEach((m, idx) => {
+      m.amount = idx === 0 ? parseMoney(perPerson + remainder) : perPerson;
+    });
+  }
+
   const newGroup: SplitGroup = {
     id: groupId,
-    name: params.name.trim(),
+    name: cleanName,
+    reference: cleanRef,
     created_by: params.creatorId,
     total_amount: safeTotal,
     currency: params.currency || 'INR',
@@ -411,8 +491,46 @@ export async function fsCreateSplitGroup(params: {
       amount: parseMoney(m.amount),
       joined_at: now,
       updated_at: now,
+      ...(m.profile ? { profile: JSON.parse(JSON.stringify(m.profile)) } : {}),
     };
-    await setDoc(doc(db, 'split_groups', groupId, 'members', memId), newMember);
+    await setDoc(doc(db, 'split_groups', groupId, 'members', memId), JSON.parse(JSON.stringify(newMember)));
+
+    // Save profile to users collection if available so other queries find it
+    if (m.profile) {
+      try {
+        const uDoc = await getDoc(doc(db, 'users', m.userId));
+        if (!uDoc.exists()) {
+          await setDoc(doc(db, 'users', m.userId), JSON.parse(JSON.stringify(m.profile)));
+        }
+      } catch (err) {
+        console.warn('Could not sync user profile to users collection:', err);
+      }
+    }
+  }
+
+  // Create initial group expense if totalAmount > 0
+  if (safeTotal > 0) {
+    const expId = `gexp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const initialExpense: GroupExpense = {
+      id: expId,
+      split_group_id: groupId,
+      name: cleanName,
+      reference: cleanRef,
+      amount: safeTotal,
+      category: 'Other',
+      paid_by_user_id: params.creatorId,
+      paid_by_profile: JSON.parse(JSON.stringify(params.creatorProfile)),
+      split_type: params.splitType || 'equal',
+      shares: memberList.map((m) => ({
+        user_id: m.userId,
+        amount: parseMoney(m.amount),
+        ...(m.profile ? { profile: JSON.parse(JSON.stringify(m.profile)) } : {}),
+      })),
+      created_by: params.creatorId,
+      created_at: now,
+      updated_at: now,
+    };
+    await setDoc(doc(db, 'split_groups', groupId, 'expenses', expId), JSON.parse(JSON.stringify(initialExpense)));
   }
 
   // Add activity
@@ -424,7 +542,7 @@ export async function fsCreateSplitGroup(params: {
     action_type: 'create_group',
     old_value: null,
     new_value: safeTotal.toString(),
-    description: `${params.creatorProfile.full_name} created "${params.name.trim()}" Total ₹${safeTotal.toLocaleString('en-IN')}`,
+    description: `${params.creatorProfile.full_name} created "${cleanName}" Total ₹${safeTotal.toLocaleString('en-IN')}`,
     created_at: now,
   };
   await setDoc(doc(db, 'split_groups', groupId, 'activities', actId), act);
@@ -449,10 +567,21 @@ export async function fsAddGroupExpense(params: {
 
   const now = new Date().toISOString();
   const safeTotal = parseMoney(params.amount);
-  const cleanRef = params.reference !== undefined
-    ? (params.reference?.trim() || null)
-    : (params.name?.trim() || null);
-  const cleanName = cleanRef || '';
+  const cleanRef = params.reference?.trim() ? params.reference.trim() : null;
+  const cleanName = params.name?.trim() ? params.name.trim() : (cleanRef || `${params.category} Expense`);
+
+  const cleanedShares = params.shares.map((s) => {
+    const item: { user_id: string; amount: number; profile?: Profile } = {
+      user_id: s.userId,
+      amount: parseMoney(s.amount),
+    };
+    if (s.profile) {
+      item.profile = JSON.parse(JSON.stringify(s.profile));
+    }
+    return item;
+  });
+
+  const cleanedActorProfile = JSON.parse(JSON.stringify(params.actorProfile));
 
   const expRef = doc(collection(db, 'split_groups', params.groupId, 'expenses'));
   const newExp: GroupExpense = {
@@ -463,19 +592,15 @@ export async function fsAddGroupExpense(params: {
     amount: safeTotal,
     category: params.category,
     paid_by_user_id: params.paidByUserId,
-    paid_by_profile: params.actorProfile,
+    paid_by_profile: cleanedActorProfile,
     split_type: params.splitType,
-    shares: params.shares.map((s) => ({
-      user_id: s.userId,
-      amount: parseMoney(s.amount),
-      profile: s.profile,
-    })),
+    shares: cleanedShares,
     created_by: params.actorProfile.id,
     created_at: now,
     updated_at: now,
   };
 
-  await setDoc(expRef, newExp);
+  await setDoc(expRef, JSON.parse(JSON.stringify(newExp)));
 
   // Recalculate group total
   const allExpSnap = await getDocs(collection(db, 'split_groups', params.groupId, 'expenses'));
@@ -522,7 +647,7 @@ export async function fsAddGroupExpense(params: {
     created_at: now,
     actor: params.actorProfile,
   };
-  await setDoc(actRef, act);
+  await setDoc(actRef, JSON.parse(JSON.stringify(act)));
 
   return newExp;
 }
@@ -551,29 +676,42 @@ export async function fsUpdateGroupExpense(params: {
   if (!expSnap.exists()) throw new Error('Expense not found.');
 
   const oldExp = expSnap.data() as GroupExpense;
-  const oldRef = (oldExp.reference !== undefined && oldExp.reference !== null ? oldExp.reference : oldExp.name) || '';
-  const newRef = (params.reference !== undefined && params.reference !== null ? params.reference.trim() : (params.name?.trim() || '')) || '';
-  const isReferenceChanged = oldRef.trim() !== newRef.trim();
+  const cleanRef = params.reference !== undefined
+    ? (params.reference?.trim() ? params.reference.trim() : null)
+    : (oldExp.reference || null);
+  const cleanName = params.name?.trim()
+    ? params.name.trim()
+    : (cleanRef || oldExp.name || `${params.category} Expense`);
+  const isReferenceChanged = (oldExp.reference || '').trim() !== (cleanRef || '').trim();
   const oldAmount = parseMoney(oldExp.amount);
+
+  const cleanedShares = params.shares.map((s) => {
+    const item: { user_id: string; amount: number; profile?: Profile } = {
+      user_id: s.userId,
+      amount: parseMoney(s.amount),
+    };
+    if (s.profile) {
+      item.profile = JSON.parse(JSON.stringify(s.profile));
+    }
+    return item;
+  });
+
+  const cleanedActorProfile = JSON.parse(JSON.stringify(params.actorProfile));
 
   const updatedExp: GroupExpense = {
     ...oldExp,
-    name: newRef,
-    reference: newRef || null,
+    name: cleanName,
+    reference: cleanRef,
     amount: safeTotal,
     category: params.category,
     paid_by_user_id: params.paidByUserId,
-    paid_by_profile: params.actorProfile,
+    paid_by_profile: cleanedActorProfile,
     split_type: params.splitType,
-    shares: params.shares.map((s) => ({
-      user_id: s.userId,
-      amount: parseMoney(s.amount),
-      profile: s.profile,
-    })),
+    shares: cleanedShares,
     updated_at: now,
   };
 
-  await setDoc(expRef, updatedExp, { merge: true });
+  await setDoc(expRef, JSON.parse(JSON.stringify(updatedExp)), { merge: true });
 
   // Recalculate group total
   const allExpSnap = await getDocs(collection(db, 'split_groups', params.groupId, 'expenses'));
@@ -611,8 +749,8 @@ export async function fsUpdateGroupExpense(params: {
         split_group_id: params.groupId,
         actor_user_id: params.actorProfile.id,
         action_type: 'edit_expense_reference',
-        old_value: oldRef.trim(),
-        new_value: newRef.trim(),
+        old_value: (oldExp.reference || '').trim(),
+        new_value: (cleanRef || '').trim(),
         description: `${params.actorProfile.full_name} changed reference`,
         created_at: now,
         actor: params.actorProfile,
@@ -624,14 +762,171 @@ export async function fsUpdateGroupExpense(params: {
         action_type: 'edit_expense',
         old_value: oldAmount.toString(),
         new_value: safeTotal.toString(),
-        description: `${params.actorProfile.full_name} updated expense ${newRef ? `"${newRef}"` : ''}`,
+        description: `${params.actorProfile.full_name} updated expense "${cleanName}"`,
         created_at: now,
         actor: params.actorProfile,
       };
 
-  await setDoc(actRef, act);
+  await setDoc(actRef, JSON.parse(JSON.stringify(act)));
 
   return updatedExp;
+}
+
+export async function fsUpdateSplitGroup(params: {
+  groupId: string;
+  name?: string;
+  reference?: string | null;
+  totalAmount?: number;
+  actorId: string;
+  actorProfile: Profile;
+}): Promise<SplitGroup> {
+  if (!isFirebaseConfigured() || !db) throw new Error('Firestore is not configured.');
+
+  const now = new Date().toISOString();
+  const groupRef = doc(db, 'split_groups', params.groupId);
+  const snap = await getDoc(groupRef);
+  if (!snap.exists()) throw new Error('Split group not found.');
+
+  const oldData = snap.data() as SplitGroup;
+  const updates: Partial<SplitGroup> = {
+    updated_at: now,
+  };
+  if (params.name !== undefined) updates.name = params.name.trim();
+  if (params.reference !== undefined) updates.reference = params.reference?.trim() || null;
+  if (params.totalAmount !== undefined) updates.total_amount = parseMoney(params.totalAmount);
+
+  await updateDoc(groupRef, updates);
+
+  // If there is only 1 expense (the initial split), keep it in sync with group details
+  const expensesSnap = await getDocs(collection(db, 'split_groups', params.groupId, 'expenses'));
+  const activeExpenses = expensesSnap.docs
+    .map((d) => ({ ...(d.data() as GroupExpense), id: d.id }))
+    .filter((e) => !e.deleted_at);
+
+  if (activeExpenses.length === 1) {
+    const singleExp = activeExpenses[0];
+    const expUpdates: Partial<GroupExpense> = {
+      updated_at: now,
+    };
+    if (updates.name !== undefined) expUpdates.name = updates.name;
+    if (updates.reference !== undefined) expUpdates.reference = updates.reference;
+
+    if (params.totalAmount !== undefined) {
+      const newTotal = parseMoney(params.totalAmount);
+      const membersSnap = await getDocs(collection(db, 'split_groups', params.groupId, 'members'));
+      const memberCount = Math.max(membersSnap.docs.length, 1);
+      const perPerson = Math.floor((newTotal / memberCount) * 100) / 100;
+      const remainder = parseMoney(newTotal - perPerson * memberCount);
+
+      const updatedShares = membersSnap.docs.map((mDoc, idx) => {
+        const m = mDoc.data() as SplitMember;
+        const shAmt = idx === 0 ? parseMoney(perPerson + remainder) : perPerson;
+        return {
+          user_id: m.user_id,
+          amount: shAmt,
+          profile: m.profile,
+        };
+      });
+
+      expUpdates.amount = newTotal;
+      expUpdates.shares = JSON.parse(JSON.stringify(updatedShares));
+
+      for (const sh of updatedShares) {
+        const mDoc = membersSnap.docs.find((d) => (d.data() as SplitMember).user_id === sh.user_id);
+        if (mDoc) {
+          await updateDoc(doc(db, 'split_groups', params.groupId, 'members', mDoc.id), {
+            amount: sh.amount,
+            updated_at: now,
+          });
+        }
+      }
+    }
+
+    await updateDoc(doc(db, 'split_groups', params.groupId, 'expenses', singleExp.id), expUpdates);
+  }
+
+  // Activity log
+  const actRef = doc(collection(db, 'split_groups', params.groupId, 'activities'));
+  const act: SplitActivity = {
+    id: actRef.id,
+    split_group_id: params.groupId,
+    actor_user_id: params.actorId,
+    action_type: 'update_group',
+    old_value: oldData.total_amount?.toString() || null,
+    new_value: updates.total_amount ? updates.total_amount.toString() : null,
+    description: `${params.actorProfile.full_name} updated split details`,
+    created_at: now,
+    actor: params.actorProfile,
+  };
+  await setDoc(actRef, JSON.parse(JSON.stringify(act)));
+
+  return { ...oldData, ...updates, id: params.groupId };
+}
+
+export async function fsUpdateMemberAmount(params: {
+  groupId: string;
+  targetUserId: string;
+  newAmount: number;
+  actorId: string;
+  actorProfile: Profile;
+  targetProfile?: Profile;
+}): Promise<void> {
+  if (!isFirebaseConfigured() || !db) throw new Error('Firestore is not configured.');
+
+  const now = new Date().toISOString();
+  const safeAmount = parseMoney(params.newAmount);
+
+  const membersSnap = await getDocs(collection(db, 'split_groups', params.groupId, 'members'));
+  const memberDoc = membersSnap.docs.find((d) => (d.data() as SplitMember).user_id === params.targetUserId);
+  if (!memberDoc) throw new Error('Member not found in this group.');
+
+  const oldAmount = parseMoney((memberDoc.data() as SplitMember).amount || 0);
+
+  await updateDoc(doc(db, 'split_groups', params.groupId, 'members', memberDoc.id), {
+    amount: safeAmount,
+    updated_at: now,
+  });
+
+  // If there is only 1 expense (the initial split), update that member's share in it
+  const expensesSnap = await getDocs(collection(db, 'split_groups', params.groupId, 'expenses'));
+  const activeExpenses = expensesSnap.docs
+    .map((d) => ({ ...(d.data() as GroupExpense), id: d.id }))
+    .filter((e) => !e.deleted_at);
+
+  if (activeExpenses.length === 1) {
+    const singleExp = activeExpenses[0];
+    const shares = [...(singleExp.shares || [])];
+    const shIdx = shares.findIndex((s) => s.user_id === params.targetUserId);
+    if (shIdx !== -1) {
+      shares[shIdx] = { ...shares[shIdx], amount: safeAmount };
+    } else {
+      shares.push({
+        user_id: params.targetUserId,
+        amount: safeAmount,
+        ...(params.targetProfile ? { profile: JSON.parse(JSON.stringify(params.targetProfile)) } : {}),
+      });
+    }
+    await updateDoc(doc(db, 'split_groups', params.groupId, 'expenses', singleExp.id), {
+      shares: JSON.parse(JSON.stringify(shares)),
+      updated_at: now,
+    });
+  }
+
+  const targetName = params.targetProfile?.full_name || 'Member';
+  const actRef = doc(collection(db, 'split_groups', params.groupId, 'activities'));
+  const act: SplitActivity = {
+    id: actRef.id,
+    split_group_id: params.groupId,
+    actor_user_id: params.actorId,
+    target_user_id: params.targetUserId,
+    action_type: 'amount_change',
+    old_value: oldAmount.toString(),
+    new_value: safeAmount.toString(),
+    description: `${params.actorProfile.full_name} updated share for ${targetName}`,
+    created_at: now,
+    actor: params.actorProfile,
+  };
+  await setDoc(actRef, JSON.parse(JSON.stringify(act)));
 }
 
 export async function fsDeleteGroupExpense(params: {
@@ -713,6 +1008,47 @@ export async function fsDeleteGroupExpense(params: {
   await setDoc(doc(db, 'split_groups', params.groupId, 'activities', actId), act);
 }
 
+export async function fsDeleteSplitGroup(params: {
+  groupId: string;
+  actorId: string;
+  actorProfile: Profile;
+}): Promise<void> {
+  if (!isFirebaseConfigured() || !db) throw new Error('Firestore is not configured.');
+
+  const now = new Date().toISOString();
+  const groupRef = doc(db, 'split_groups', params.groupId);
+  const snap = await getDoc(groupRef);
+  if (!snap.exists()) throw new Error('Split group not found.');
+
+  const groupData = snap.data() as SplitGroup;
+  if (groupData.created_by !== params.actorId) {
+    throw new Error('Permission denied: Only the group owner can delete this group.');
+  }
+
+  // Soft delete group doc so that audit history is preserved and group routes handle cleanly
+  await updateDoc(groupRef, {
+    status: 'deleted',
+    deleted_at: now,
+    deleted_by: params.actorId,
+    updated_at: now,
+  });
+
+  // Immutable activity record
+  const actId = `act_${Date.now()}_grp_deleted`;
+  const act: SplitActivity = {
+    id: actId,
+    split_group_id: params.groupId,
+    actor_user_id: params.actorId,
+    action_type: 'delete_group',
+    old_value: groupData.name,
+    new_value: 'deleted',
+    description: `${params.actorProfile.full_name} deleted group "${groupData.name}"`,
+    created_at: now,
+    actor: params.actorProfile,
+  };
+  await setDoc(doc(db, 'split_groups', params.groupId, 'activities', actId), act);
+}
+
 export function fsSubscribeToGroupUpdates(
   groupId: string,
   callback: (event: { type: string; payload?: unknown }) => void
@@ -721,7 +1057,14 @@ export function fsSubscribeToGroupUpdates(
 
   const unsubGroup = onSnapshot(doc(db, 'split_groups', groupId), (snap) => {
     if (snap.exists()) {
-      callback({ type: 'GROUP_UPDATED', payload: snap.data() });
+      const data = snap.data();
+      if (data?.status === 'deleted' || data?.deleted_at) {
+        callback({ type: 'GROUP_DELETED', payload: data });
+      } else {
+        callback({ type: 'GROUP_UPDATED', payload: data });
+      }
+    } else {
+      callback({ type: 'GROUP_DELETED' });
     }
   });
 
@@ -735,10 +1078,16 @@ export function fsSubscribeToGroupUpdates(
     () => callback({ type: 'EXPENSES_CHANGED' })
   );
 
+  const unsubActivities = onSnapshot(
+    collection(db, 'split_groups', groupId, 'activities'),
+    () => callback({ type: 'ACTIVITY_CHANGED' })
+  );
+
   return () => {
     unsubGroup();
     unsubMembers();
     unsubExpenses();
+    unsubActivities();
   };
 }
 

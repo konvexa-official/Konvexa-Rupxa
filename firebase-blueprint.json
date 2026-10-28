@@ -110,12 +110,39 @@
         "updated_at": { "type": "string" }
       },
       "required": ["id", "user_id", "category", "limit_amount"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "User note with text or checklist items, finance tag, pin, and favorite flags",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["text", "checklist"] },
+        "checklistItems": { "type": "array" },
+        "isPinned": { "type": "boolean" },
+        "isFavorite": { "type": "boolean" },
+        "isFinanceNote": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "archived", "trashed"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "deletedAt": { "type": "string" },
+        "schemaVersion": { "type": "number" },
+        "version": { "type": "number" }
+      },
+      "required": ["id", "userId", "title", "type", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "User profiles and account settings"
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/Note" },
+      "description": "User notes belonging strictly to an individual authenticated user"
     },
     "/expenses/{expenseId}": {
       "schema": { "$ref": "#/entities/Expense" },

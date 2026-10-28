@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
 import { Expense, ExpenseCategory, PaymentMethod } from '../types';
 import { createExpense, updateExpense } from '../lib/db';
 import { formatCurrency, parseMoney } from '../lib/formatters';
@@ -43,7 +42,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   expenses = [],
 }) => {
   const { user } = useAuth();
-  const { isDark } = useTheme();
 
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
@@ -195,19 +193,15 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   return (
     <div
       id="expense-modal-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
     >
       <div
         id="expense-modal-card"
-        className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl transition-all ${
-          isDark
-            ? 'bg-[#0B0B0B] border-[#2A2926] text-white shadow-black/80'
-            : 'bg-white border-[#E6DFC8] text-black shadow-xl'
-        }`}
+        className="w-full max-w-md rounded-xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] p-4 sm:p-6 shadow-2xl transition-colors max-h-[92vh] overflow-y-auto"
       >
-        <div className="flex items-center justify-between pb-4 border-b border-[#E6DFC8] dark:border-[#2A2926]">
+        <div className="flex items-center justify-between pb-4 border-b border-[var(--border)]">
           <h2
-            className="text-lg font-black tracking-tight text-black dark:text-white"
+            className="text-lg font-bold tracking-tight text-[var(--text-primary)]"
             style={{ fontFamily: 'Space Grotesk, sans-serif' }}
           >
             {editingExpense ? 'Edit Expense' : 'Add New Expense'}
@@ -216,11 +210,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             id="close-expense-modal-btn"
             type="button"
             onClick={onClose}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isDark
-                ? 'text-[#A6A29A] hover:text-white hover:bg-[#2A2926]'
-                : 'text-black/60 hover:text-black hover:bg-[#FAF8F5]'
-            }`}
+            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -229,9 +219,9 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         {error && (
           <div
             id="expense-form-error"
-            className="mt-4 p-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/20 dark:text-rose-400 text-xs flex items-center gap-2 font-bold"
+            className="mt-4 p-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-center gap-2 font-semibold"
           >
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
             <span>{error}</span>
           </div>
         )}
@@ -239,11 +229,11 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           {/* Amount input */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
+            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[var(--text-secondary)]">
               Amount (INR)
             </label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-[#8C6B1F] dark:text-[#E6CA65]">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-[#B08D57]">
                 ₹
               </span>
               <input
@@ -255,53 +245,41 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className={`w-full pl-8 pr-4 py-2.5 rounded-xl text-base font-bold font-mono border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
-                  isDark
-                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
-                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
-                }`}
+                className="w-full pl-8 pr-4 py-2.5 rounded-xl text-base font-bold font-mono border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-[#B08D57] transition-colors"
               />
             </div>
           </div>
 
           {/* Description */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
+            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[var(--text-secondary)]">
               Description
             </label>
             <input
               id="expense-description-input"
               type="text"
               required
-              placeholder="Expense description"
+              placeholder="Expense description (e.g., Grocery shopping, Uber ride)"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
-                isDark
-                  ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
-                  : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
-              }`}
+              className="w-full px-4 py-2.5 rounded-xl text-sm font-medium border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-[#B08D57] transition-colors"
             />
           </div>
 
           {/* Category & Payment Method in grid */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
+              <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[var(--text-secondary)]">
                 Category
               </label>
               <select
                 id="expense-category-select"
                 value={category}
                 onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-                className={`w-full px-3 py-2.5 rounded-xl text-sm font-semibold border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
-                  isDark
-                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
-                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37]'
-                }`}
+                className="w-full px-3 py-2.5 rounded-xl text-sm font-semibold border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] outline-none focus:border-[#B08D57] transition-colors"
               >
                 {CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat} className={isDark ? 'bg-[#0B0B0B] text-white' : 'bg-white text-black'}>
+                  <option key={cat} value={cat} className="bg-[var(--surface)] text-[var(--text-primary)]">
                     {cat}
                   </option>
                 ))}
@@ -309,21 +287,17 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
+              <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[var(--text-secondary)]">
                 Payment Method
               </label>
               <select
                 id="expense-payment-select"
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-                className={`w-full px-3 py-2.5 rounded-xl text-sm font-semibold border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
-                  isDark
-                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
-                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37]'
-                }`}
+                className="w-full px-3 py-2.5 rounded-xl text-sm font-semibold border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] outline-none focus:border-[#B08D57] transition-colors"
               >
                 {PAYMENT_METHODS.map((pm) => (
-                  <option key={pm} value={pm} className={isDark ? 'bg-[#0B0B0B] text-white' : 'bg-white text-black'}>
+                  <option key={pm} value={pm} className="bg-[var(--surface)] text-[var(--text-primary)]">
                     {pm}
                   </option>
                 ))}
@@ -331,24 +305,20 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             </div>
           </div>
 
-          {/* Custom Category Name (Required only when Category = Other, Hidden for all other categories) */}
+          {/* Custom Category Name (Required only when Category = Other) */}
           {category === 'Other' && (
             <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
-                Custom Category Name <span className="text-[#C59B27]">*</span>
+              <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[var(--text-secondary)]">
+                Custom Category Name <span className="text-[#B08D57]">*</span>
               </label>
               <input
                 id="expense-custom-category-input"
                 type="text"
                 required
-                placeholder="Enter category name"
+                placeholder="Enter custom category name"
                 value={customCategory}
                 onChange={(e) => setCustomCategory(e.target.value)}
-                className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
-                  isDark
-                    ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
-                    : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
-                }`}
+                className="w-full px-4 py-2.5 rounded-xl text-sm font-medium border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-[#B08D57] transition-colors"
               />
             </div>
           )}
@@ -356,30 +326,30 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           {/* Subtle Live Budget Target Alert Callout */}
           {budgetAlert && (
             <div
-              className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition-all ${
+              className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition-colors ${
                 budgetAlert.isOver
-                  ? 'bg-[#FFFBF0] dark:bg-amber-950/20 border-[#D4AF37] text-black dark:text-amber-300'
-                  : 'bg-[#FAF8F5] dark:bg-[#1C160C] border-[#D4AF37]/50 text-black dark:text-[#E6CA65]'
+                  ? 'bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
               }`}
             >
-              <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${budgetAlert.isOver ? 'text-[#C59B27]' : 'text-[#8C6B1F]'}`} />
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <div>
-                <p className="font-bold text-black dark:text-white">
+                <p className="font-semibold text-[var(--text-primary)]">
                   {budgetAlert.isOver ? 'Exceeds Monthly Budget Target' : 'Approaching Budget Target'}
                 </p>
-                <p className="text-[11px] text-[#292524] dark:text-[#C8BFB5] mt-0.5 font-medium">
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5 font-normal leading-relaxed">
                   {budgetAlert.isOver ? (
                     <>
                       This will bring your monthly <strong>{category}</strong> spending to{' '}
-                      <span className="font-mono text-black dark:text-white font-bold">{formatCurrency(budgetAlert.projectedTotal)}</span>, exceeding your{' '}
-                      <span className="font-mono text-black dark:text-white font-bold">{formatCurrency(budgetAlert.limit)}</span> target by{' '}
-                      <span className="font-mono font-black text-rose-600 dark:text-rose-400">+{formatCurrency(budgetAlert.overBy)}</span>.
+                      <span className="font-mono text-[var(--text-primary)] font-bold">{formatCurrency(budgetAlert.projectedTotal)}</span>, exceeding your{' '}
+                      <span className="font-mono text-[var(--text-primary)] font-bold">{formatCurrency(budgetAlert.limit)}</span> target by{' '}
+                      <span className="font-mono font-bold text-red-600 dark:text-red-400">+{formatCurrency(budgetAlert.overBy)}</span>.
                     </>
                   ) : (
                     <>
                       This will bring your monthly <strong>{category}</strong> spending to{' '}
-                      <span className="font-mono text-black dark:text-white font-bold">{formatCurrency(budgetAlert.projectedTotal)}</span> of your{' '}
-                      <span className="font-mono text-black dark:text-white font-bold">{formatCurrency(budgetAlert.limit)}</span> target ({formatCurrency(budgetAlert.remaining || 0)} remaining).
+                      <span className="font-mono text-[var(--text-primary)] font-bold">{formatCurrency(budgetAlert.projectedTotal)}</span> of your{' '}
+                      <span className="font-mono text-[var(--text-primary)] font-bold">{formatCurrency(budgetAlert.limit)}</span> target ({formatCurrency(budgetAlert.remaining || 0)} remaining).
                     </>
                   )}
                 </p>
@@ -389,7 +359,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
 
           {/* Date */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1.5 text-black dark:text-[#A6A29A]">
+            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5 text-[var(--text-secondary)]">
               Expense Date
             </label>
             <input
@@ -398,11 +368,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
               required
               value={expenseDate}
               onChange={(e) => setExpenseDate(e.target.value)}
-              className={`w-full px-4 py-2.5 rounded-xl text-sm font-semibold border transition-colors outline-none focus:ring-2 focus:ring-[#D4AF37]/30 ${
-                isDark
-                  ? 'bg-[#0B0B0B] border-[#2A2926] text-white focus:border-[#D4AF37]'
-                  : 'bg-[#FAF8F5] border-[#E6DFC8] text-black focus:border-[#D4AF37]'
-              }`}
+              className="w-full px-4 py-2.5 rounded-xl text-sm font-semibold border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] outline-none focus:border-[#B08D57] transition-colors"
             />
           </div>
 
@@ -413,11 +379,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
               type="button"
               onClick={onClose}
               disabled={loading}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors ${
-                isDark
-                  ? 'border-[#2A2926] hover:bg-[#2A2926] text-[#A6A29A]'
-                  : 'border-[#E6DFC8] hover:bg-[#FAF8F5] text-black'
-              }`}
+              className="px-4 py-2.5 rounded-xl text-xs font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] text-[var(--text-primary)] hover:border-[#B08D57] transition-colors"
             >
               Cancel
             </button>
@@ -425,13 +387,13 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
               id="save-expense-submit-btn"
               type="submit"
               disabled={loading}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50 border border-[#B38A22]/40"
+              className="px-5 py-2.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 active:scale-95 shadow-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
               ) : (
                 <>
-                  <Check className="w-4 h-4 stroke-[3]" />
+                  <Check className="w-4 h-4 stroke-[2.5]" />
                   <span>{editingExpense ? 'Update Expense' : 'Save Expense'}</span>
                 </>
               )}

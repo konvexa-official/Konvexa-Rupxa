@@ -7,6 +7,7 @@ import { DesktopSidebar, MobileBottomNav } from './components/Navigation';
 import { Dashboard } from './components/Dashboard';
 import { Expenses } from './components/Expenses';
 import { Splitter } from './components/Splitter';
+import { Notes } from './components/Notes';
 import { Settings } from './components/Settings';
 import { ExpenseModal } from './components/ExpenseModal';
 import { JoinSplitInviteModal } from './components/JoinSplitInviteModal';
@@ -41,13 +42,44 @@ function MainApp() {
   const [pendingJoinGroupId, setPendingJoinGroupId] = useState<string | null>(null);
   const [selectedSplitId, setSelectedSplitId] = useState<string | null>(null);
 
-  // Detect ?join_split= in URL
+  // Detect ?join_split= or group route parameters in URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const joinId = params.get('join_split');
     if (joinId) {
       setPendingJoinGroupId(joinId);
     }
+    const routeGroupId =
+      params.get('split') ||
+      params.get('split_id') ||
+      params.get('group_id') ||
+      params.get('groupId');
+    if (routeGroupId) {
+      setSelectedSplitId(routeGroupId);
+      setActiveTab('splitter');
+    }
+    const tab = params.get('tab') as ActiveTab;
+    if (tab && ['dashboard', 'expenses', 'splitter', 'notes', 'settings'].includes(tab)) {
+      setActiveTab(tab);
+    }
+
+    const handlePopState = () => {
+      const p = new URLSearchParams(window.location.search);
+      const gid =
+        p.get('split') ||
+        p.get('split_id') ||
+        p.get('group_id') ||
+        p.get('groupId');
+      if (gid) {
+        setSelectedSplitId(gid);
+        setActiveTab('splitter');
+      } else {
+        setSelectedSplitId(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   // Fetch real user data including expenses, split groups, and category budgets
@@ -85,17 +117,15 @@ function MainApp() {
     return (
       <div
         id="rupxa-loading-screen"
-        className={`min-h-screen flex flex-col items-center justify-center p-4 transition-colors ${
-          isDark ? 'bg-[#0B0B0B] text-white' : 'bg-[#F5F2EA] text-[#0B0B0B]'
-        }`}
+        className="min-h-screen flex flex-col items-center justify-center p-4 bg-[var(--background)] text-[var(--text-primary)] transition-colors"
       >
-        <div className="w-12 h-12 rounded-2xl border border-[#B08D57] bg-[#0B0B0B] flex items-center justify-center animate-pulse mb-4 shadow-lg shadow-[#B08D57]/10">
+        <div className="w-12 h-12 rounded-2xl border border-[var(--accent)] bg-[var(--surface)] flex items-center justify-center animate-pulse mb-4 shadow-lg shadow-[var(--accent)]/10">
           <div className="flex items-center justify-center font-bold text-lg">
-            <span className="text-[#B08D57]">K</span>
-            <span className="text-white">R</span>
+            <span className="text-[var(--accent)]">K</span>
+            <span className="text-[var(--text-primary)]">R</span>
           </div>
         </div>
-        <p className="text-sm font-semibold tracking-tight text-[#0B0B0B] dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+        <p className="text-sm font-semibold tracking-tight text-[var(--text-primary)]" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
           Loading Konvexa Rupxa...
         </p>
       </div>
@@ -123,9 +153,7 @@ function MainApp() {
   return (
     <div
       id="rupxa-app-root"
-      className={`min-h-screen flex flex-col transition-colors ${
-        isDark ? 'bg-[#0B0B0B] text-white' : 'bg-[#FAF8F5] text-black'
-      }`}
+      className="min-h-screen flex flex-col bg-[var(--background)] text-[var(--text-primary)] transition-colors"
     >
       {/* Top Header */}
       <Header
@@ -143,7 +171,7 @@ function MainApp() {
         {/* Primary Content View */}
         <main
           id="rupxa-primary-content"
-          className="flex-1 px-4 sm:px-8 py-6 sm:py-8 max-w-7xl mx-auto w-full mb-16 md:mb-0"
+          className="flex-1 px-3 sm:px-8 py-3.5 sm:py-8 max-w-7xl mx-auto w-full min-w-0 pb-20 md:pb-8"
         >
           {activeTab === 'dashboard' && (
             <Dashboard
@@ -153,6 +181,18 @@ function MainApp() {
               onOpenAddExpense={handleOpenAddExpense}
               onSelectExpense={handleEditExpense}
               setActiveTab={setActiveTab}
+              onSelectSplit={(groupId) => {
+                setSelectedSplitId(groupId);
+                setActiveTab('splitter');
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('tab', 'splitter');
+                  url.searchParams.set('split', groupId);
+                  window.history.pushState({ splitId: groupId }, '', url.toString());
+                } catch (e) {
+                  console.warn('Could not update history state:', e);
+                }
+              }}
               budgets={budgets}
               onOpenBudgetSettings={() => setIsBudgetModalOpen(true)}
             />
@@ -178,6 +218,8 @@ function MainApp() {
               initialSelectedGroupId={selectedSplitId}
             />
           )}
+
+          {activeTab === 'notes' && <Notes />}
 
           {activeTab === 'settings' && <Settings />}
         </main>

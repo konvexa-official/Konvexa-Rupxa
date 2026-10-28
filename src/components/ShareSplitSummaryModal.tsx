@@ -149,19 +149,19 @@ export const ShareSplitSummaryModal: React.FC<ShareSplitSummaryModalProps> = ({
         }`}
       >
         {/* Modal Header */}
-        <div className="p-5 sm:p-6 border-b border-[#2A2926] flex items-center justify-between bg-gradient-to-r from-[#D4AF37]/15 via-transparent to-transparent">
+        <div className="p-5 sm:p-6 border-b border-[var(--border)] flex items-center justify-between bg-gradient-to-r from-[#D4AF37]/15 via-transparent to-transparent">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 flex items-center justify-center font-black shadow-md">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-500 flex items-center justify-center font-black shadow-md">
               <MessageCircle className="w-5 h-5" />
             </div>
             <div>
               <h3
-                className="text-lg font-black tracking-tight"
+                className="text-lg font-black tracking-tight text-[var(--text-primary)]"
                 style={{ fontFamily: 'Space Grotesk, sans-serif' }}
               >
                 Share Group Digest
               </h3>
-              <p className="text-xs text-[#A6A29A]">
+              <p className="text-xs text-[var(--text-secondary)]">
                 1-Click formatted summary for WhatsApp, Telegram & Chat groups
               </p>
             </div>
@@ -169,7 +169,7 @@ export const ShareSplitSummaryModal: React.FC<ShareSplitSummaryModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-2 text-[#A6A29A] hover:text-white rounded-xl hover:bg-white/10 transition-colors"
+            className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-xl hover:bg-[var(--surface-secondary)] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -183,9 +183,9 @@ export const ShareSplitSummaryModal: React.FC<ShareSplitSummaryModalProps> = ({
                 type="checkbox"
                 checked={includeUpiLinks}
                 onChange={(e) => setIncludeUpiLinks(e.target.checked)}
-                className="w-4 h-4 rounded text-[#D4AF37] focus:ring-0 accent-[#D4AF37]"
+                className="w-4 h-4 rounded text-[#B08D57] focus:ring-0 accent-[#B08D57]"
               />
-              <span className="font-bold text-black dark:text-white">Include UPI Links</span>
+              <span className="font-bold text-[var(--text-primary)]">Include UPI Links</span>
             </label>
 
             <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -193,22 +193,22 @@ export const ShareSplitSummaryModal: React.FC<ShareSplitSummaryModalProps> = ({
                 type="checkbox"
                 checked={includeExpenses}
                 onChange={(e) => setIncludeExpenses(e.target.checked)}
-                className="w-4 h-4 rounded text-[#D4AF37] focus:ring-0 accent-[#D4AF37]"
+                className="w-4 h-4 rounded text-[#B08D57] focus:ring-0 accent-[#B08D57]"
               />
-              <span className="font-bold text-black dark:text-white">Include Recent Expenses</span>
+              <span className="font-bold text-[var(--text-primary)]">Include Recent Expenses</span>
             </label>
           </div>
 
           {/* Styled Text Preview Card */}
           <div className="space-y-1.5">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#A6A29A]">
-              Live Digest Preview
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+              Digest Preview
             </span>
             <div
               className={`p-4 rounded-2xl border font-mono text-xs whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto ${
                 isDark
-                  ? 'bg-[#141414] border-[#2A2926] text-[#E6DFC8]'
-                  : 'bg-[#FAF8F5] border-[#E6DFC8] text-[#292524]'
+                  ? 'bg-[#141414] border-[#2A2926] text-[#F5F2EA]'
+                  : 'bg-[#FAF8F5] border-[#D8D2C7] text-[#0B0B0B]'
               }`}
             >
               {summaryText}
@@ -216,20 +216,20 @@ export const ShareSplitSummaryModal: React.FC<ShareSplitSummaryModalProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-[#2A2926]">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-[var(--border)]">
             <button
               type="button"
               onClick={handleCopy}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border border-[#2A2926] hover:bg-white/5 text-[#A6A29A] hover:text-white transition-colors"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] text-[var(--text-primary)] transition-colors"
             >
               {copied ? (
                 <>
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  <span className="text-emerald-400 font-bold">Copied to Clipboard!</span>
+                  <Check className="w-4 h-4 text-emerald-500" />
+                  <span className="text-emerald-500 font-bold">Copied to Clipboard!</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-4 h-4" />
+                  <Copy className="w-4 h-4 text-[#B08D57]" />
                   <span>Copy Summary</span>
                 </>
               )}
@@ -240,9 +240,9 @@ export const ShareSplitSummaryModal: React.FC<ShareSplitSummaryModalProps> = ({
                 <button
                   type="button"
                   onClick={handleNativeShare}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold border border-[#2A2926] hover:bg-white/5 text-white transition-colors"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] text-[var(--text-primary)] transition-colors"
                 >
-                  <Share2 className="w-4 h-4 text-[#8C6B1F] dark:text-[#E6CA65]" />
+                  <Share2 className="w-4 h-4 text-[#B08D57]" />
                   <span>Share Sheet</span>
                 </button>
               )}

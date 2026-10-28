@@ -1,16 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
 import { SplitGroupSummary, SplitGroup } from '../types';
 import { formatCurrency } from '../lib/formatters';
 import { CreateSplitModal } from './CreateSplitModal';
 import { SplitGroupDetail } from './SplitGroupDetail';
+import { DeleteGroupModal } from './DeleteGroupModal';
 import { addMemberToSplitGroup } from '../lib/db';
 import {
   Users,
   Plus,
   Link as LinkIcon,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
 
 interface SplitterProps {
@@ -27,12 +28,72 @@ export const Splitter: React.FC<SplitterProps> = ({
   initialSelectedGroupId,
 }) => {
   const { user } = useAuth();
-  const { isDark } = useTheme();
+
+  const getUrlGroupId = (): string | null => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return (
+        params.get('split') ||
+        params.get('split_id') ||
+        params.get('group_id') ||
+        params.get('groupId') ||
+        null
+      );
+    } catch {
+      return null;
+    }
+  };
 
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(
-    initialSelectedGroupId || null
+    initialSelectedGroupId || getUrlGroupId()
   );
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<SplitGroupSummary | null>(null);
+
+  // Sync when initialSelectedGroupId changes from props
+  useEffect(() => {
+    if (initialSelectedGroupId) {
+      setSelectedGroupId(initialSelectedGroupId);
+    }
+  }, [initialSelectedGroupId]);
+
+  // Sync browser Back/Forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const gid = getUrlGroupId();
+      setSelectedGroupId(gid);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const handleSelectGroup = (groupId: string) => {
+    const cleanId = groupId.trim();
+    setSelectedGroupId(cleanId);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'splitter');
+      url.searchParams.set('split', cleanId);
+      window.history.pushState({ splitId: cleanId }, '', url.toString());
+    } catch (e) {
+      console.warn('Could not update history state:', e);
+    }
+  };
+
+  const handleBack = () => {
+    setSelectedGroupId(null);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('split');
+      url.searchParams.delete('split_id');
+      url.searchParams.delete('group_id');
+      url.searchParams.delete('groupId');
+      window.history.pushState({}, '', url.toString());
+    } catch (e) {
+      console.warn('Could not update history state:', e);
+    }
+    onRefresh();
+  };
 
   // Join Split with ID / Code dialog
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
@@ -42,7 +103,7 @@ export const Splitter: React.FC<SplitterProps> = ({
 
   const handleCreated = (newGroup: SplitGroup) => {
     onRefresh();
-    setSelectedGroupId(newGroup.id);
+    handleSelectGroup(newGroup.id);
   };
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
@@ -76,7 +137,7 @@ export const Splitter: React.FC<SplitterProps> = ({
       onRefresh();
       setIsJoinModalOpen(false);
       setJoinCodeInput('');
-      setSelectedGroupId(targetGroupId);
+      handleSelectGroup(targetGroupId);
     } catch (err: unknown) {
       if (err instanceof Error) {
         setJoinError(err.message);
@@ -93,31 +154,28 @@ export const Splitter: React.FC<SplitterProps> = ({
     return (
       <SplitGroupDetail
         groupId={selectedGroupId}
-        onBack={() => {
-          setSelectedGroupId(null);
-          onRefresh();
-        }}
+        onBack={handleBack}
       />
     );
   }
 
   return (
-    <div id="splitter-view" className="space-y-6 max-w-6xl mx-auto pb-12">
+    <div id="splitter-view" className="space-y-4 sm:space-y-6 max-w-6xl mx-auto pb-8 sm:pb-12">
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1
-            className="text-2xl sm:text-3xl font-black tracking-tight text-black dark:text-white"
+            className="text-xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] truncate"
             style={{ fontFamily: 'Space Grotesk, sans-serif' }}
           >
-            Collaborative Splitter
+            Splitter
           </h1>
-          <p className="text-xs sm:text-sm text-[#292524] dark:text-[#A6A29A] font-medium mt-1">
-            Real-time shared groups, transparent splits & immutable audit trails
+          <p className="text-xs sm:text-sm text-[var(--text-secondary)] font-normal mt-0.5 sm:mt-1 truncate hidden xs:block">
+            Shared group expenses, transparent calculations, and instant settlements.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 self-start sm:self-auto">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           <button
             id="open-join-split-btn"
             type="button"
@@ -126,23 +184,20 @@ export const Splitter: React.FC<SplitterProps> = ({
               setJoinCodeInput('');
               setJoinError(null);
             }}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 ${
-              isDark
-                ? 'border-[#2A2926] bg-[#0B0B0B] hover:border-[#D4AF37] text-white'
-                : 'border-[#D4AF37] bg-white hover:bg-[#FAF8F5] text-black shadow-xs'
-            }`}
+            className="px-2.5 sm:px-3.5 py-1.5 sm:py-2.5 rounded-xl text-xs font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] text-[var(--text-primary)] transition-all shadow-xs flex items-center gap-1.5"
           >
-            <LinkIcon className="w-3.5 h-3.5 text-[#C59B27]" />
-            <span>Join with Link</span>
+            <LinkIcon className="w-3.5 h-3.5 text-[#B08D57]" />
+            <span className="hidden sm:inline">Join with Link</span>
+            <span className="sm:hidden">Join</span>
           </button>
 
           <button
             id="create-split-btn"
             type="button"
             onClick={() => setIsCreateModalOpen(true)}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 active:scale-95 transition-all shadow-sm border border-[#B38A22]/40"
+            className="inline-flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 active:scale-95 transition-all shadow-xs"
           >
-            <Plus className="w-4 h-4 stroke-[3]" />
+            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
             <span>Create Split</span>
           </button>
         </div>
@@ -151,107 +206,119 @@ export const Splitter: React.FC<SplitterProps> = ({
       {/* My Splits Section */}
       <div
         id="my-splits-container"
-        className={`rounded-2xl border p-5 sm:p-6 transition-all ${
-          isDark ? 'bg-[#0B0B0B] border-[#2A2926]' : 'bg-white border-[#E6DFC8] shadow-xs'
-        }`}
+        className="rounded-xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3.5 sm:p-6 shadow-xs transition-colors"
       >
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2
-              className="text-lg font-black tracking-tight text-black dark:text-white"
-              style={{ fontFamily: 'Space Grotesk, sans-serif' }}
-            >
-              My Splits
-            </h2>
-            <p className="text-xs text-[#292524] dark:text-[#A6A29A] font-medium">
-              Groups where you are an owner or collaborative member
-            </p>
-          </div>
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
+          <h2
+            className="text-base sm:text-lg font-bold tracking-tight text-[var(--text-primary)]"
+            style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+          >
+            My Splits
+          </h2>
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 py-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 py-2">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-36 rounded-2xl bg-[#E6DFC8]/40 animate-pulse" />
+              <div key={i} className="h-32 sm:h-36 rounded-xl sm:rounded-2xl bg-[var(--surface-secondary)] animate-pulse" />
             ))}
           </div>
         ) : splits.length === 0 ? (
-          <div id="splitter-empty-state" className="py-16 text-center px-4">
-            <div className="w-12 h-12 rounded-full bg-[#D4AF37]/15 flex items-center justify-center mx-auto mb-3 text-[#C59B27] border border-[#D4AF37]/40">
-              <Users className="w-6 h-6" />
+          <div id="splitter-empty-state" className="py-10 sm:py-16 text-center px-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#B08D57]/15 flex items-center justify-center mx-auto mb-2.5 text-[#B08D57] border border-[#B08D57]/30">
+              <Users className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <p className="text-sm font-bold text-black dark:text-white">
+            <p className="text-xs sm:text-sm font-semibold text-[var(--text-primary)]">
               You don&apos;t have any shared splits yet.
             </p>
-            <p className="text-xs text-[#292524] dark:text-[#A6A29A] max-w-sm mx-auto mt-1 mb-5 font-medium">
+            <p className="text-[11px] sm:text-xs text-[var(--text-secondary)] max-w-sm mx-auto mt-0.5 mb-4 font-normal">
               Create a shared split group with colleagues, flatmates, or travel buddies.
-              Everyone sees updates in real-time.
             </p>
             <button
               id="empty-create-split-btn"
               type="button"
               onClick={() => setIsCreateModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 shadow-sm transition-all border border-[#B38A22]/40"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#0B0B0B] bg-[#B08D57] hover:brightness-105 shadow-xs transition-all"
             >
-              <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span>Create your first split</span>
+              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Create first split</span>
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {splits.map((split) => (
               <div
                 key={split.id}
                 id={`split-card-${split.id}`}
-                onClick={() => setSelectedGroupId(split.id)}
+                onClick={() => handleSelectGroup(split.id)}
                 role="button"
                 tabIndex={0}
-                className={`p-5 rounded-2xl border cursor-pointer transition-all hover:scale-[1.01] flex flex-col justify-between ${
-                  isDark
-                    ? 'border-[#2A2926] bg-[#0B0B0B] hover:border-[#D4AF37]'
-                    : 'border-[#E6DFC8] bg-[#FAF8F5] hover:border-[#D4AF37] shadow-xs'
-                }`}
+                className="p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface-secondary)] hover:border-[#B08D57] cursor-pointer transition-all flex flex-col justify-between shadow-xs"
               >
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
                         split.user_role === 'owner'
-                          ? 'bg-[#D4AF37]/20 text-[#8C6B1F] dark:text-[#E6CA65] border-[#D4AF37]/50'
-                          : 'bg-black/10 text-black dark:text-white border-black/20'
+                          ? 'bg-[#B08D57]/15 text-[#B08D57] border-[#B08D57]/30'
+                          : 'bg-[var(--surface)] text-[var(--text-secondary)] border-[var(--border)]'
                       }`}
                     >
                       {split.user_role === 'owner' ? 'Owner' : 'Member'}
                     </span>
-                    <span className="text-xs text-[#292524] dark:text-[#A6A29A] flex items-center gap-1 font-medium">
-                      <Users className="w-3.5 h-3.5 text-[#C59B27]" />
-                      <span>{split.member_count} member{split.member_count === 1 ? '' : 's'}</span>
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--text-secondary)] flex items-center gap-1 font-medium">
+                        <Users className="w-3.5 h-3.5 text-[#B08D57]" />
+                        <span>{split.member_count} member{split.member_count === 1 ? '' : 's'}</span>
+                      </span>
+
+                      {/* Delete split button (only for owner) */}
+                      {split.user_role === 'owner' && (
+                        <button
+                          type="button"
+                          id={`delete-split-btn-${split.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setGroupToDelete(split);
+                          }}
+                          className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                          title="Delete Split Group"
+                          aria-label={`Delete split group ${split.name}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  <h3 className="font-bold text-base tracking-tight truncate text-black dark:text-white mb-1">
+                  <h3 className="font-bold text-base tracking-tight truncate text-[var(--text-primary)] mb-0.5">
                     {split.name}
                   </h3>
-                  <span className="text-[11px] text-[#292524] dark:text-[#A6A29A] font-medium">
+                  {split.reference && (
+                    <p className="text-xs text-[#B08D57] font-medium truncate mb-1">
+                      Ref: {split.reference}
+                    </p>
+                  )}
+                  <span className="text-[11px] text-[var(--text-muted)] font-normal block">
                     Created {new Date(split.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                   </span>
                 </div>
 
-                <div className="mt-5 pt-3 border-t border-[#E6DFC8] dark:border-[#2A2926] flex items-end justify-between">
+                <div className="mt-5 pt-3 border-t border-[var(--border)] flex items-end justify-between">
                   <div>
-                    <span className="text-[10px] text-[#292524] dark:text-[#A6A29A] uppercase tracking-wider block font-bold">
+                    <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider block font-semibold">
                       Your Share
                     </span>
-                    <span className="text-sm font-bold font-mono text-black dark:text-white">
+                    <span className="text-sm font-bold font-mono text-[var(--text-primary)]">
                       {formatCurrency(split.user_amount)}
                     </span>
                   </div>
 
                   <div className="text-right">
-                    <span className="text-[10px] text-[#292524] dark:text-[#A6A29A] uppercase tracking-wider block font-bold">
+                    <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider block font-semibold">
                       Total
                     </span>
-                    <span className="text-base font-black font-mono tracking-tight text-[#8C6B1F] dark:text-[#E6CA65]">
+                    <span className="text-base font-bold font-mono tracking-tight text-[#B08D57]">
                       {formatCurrency(split.total_amount)}
                     </span>
                   </div>
@@ -273,31 +340,29 @@ export const Splitter: React.FC<SplitterProps> = ({
       {isJoinModalOpen && (
         <div
           id="join-split-modal-backdrop"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
         >
           <div
             id="join-split-modal-card"
-            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl transition-all ${
-              isDark ? 'bg-[#0B0B0B] border-[#2A2926] text-white' : 'bg-white border-[#E6DFC8] text-black'
-            }`}
+            className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] p-6 shadow-2xl transition-colors"
           >
-            <h3 className="font-black text-base text-black dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+            <h3 className="font-bold text-base text-[var(--text-primary)]" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
               Join a Shared Split Group
             </h3>
-            <p className="text-xs text-[#292524] dark:text-[#A6A29A] mt-1 mb-4 font-medium">
+            <p className="text-xs text-[var(--text-secondary)] mt-1 mb-4 font-normal">
               Paste the invitation link or group ID shared by another Konvexa Rupxa user.
             </p>
 
             {joinError && (
-              <div className="mb-3 p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-xs flex items-center gap-2 font-bold">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <div className="mb-3 p-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-center gap-2 font-semibold">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
                 <span>{joinError}</span>
               </div>
             )}
 
             <form onSubmit={handleJoinSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-black dark:text-[#A6A29A] mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)] mb-1">
                   Invite Link or Group ID
                 </label>
                 <input
@@ -307,11 +372,7 @@ export const Splitter: React.FC<SplitterProps> = ({
                   placeholder="Invitation link or group ID"
                   value={joinCodeInput}
                   onChange={(e) => setJoinCodeInput(e.target.value)}
-                  className={`w-full px-3 py-2.5 rounded-xl text-xs border outline-none font-mono font-bold ${
-                    isDark
-                      ? 'bg-[#0B0B0B] border-[#2A2926] text-white placeholder-[#A6A29A] focus:border-[#D4AF37]'
-                      : 'bg-[#FAF8F5] border-[#E6DFC8] text-black placeholder-[#8F8A80] focus:border-[#D4AF37]'
-                  }`}
+                  className="w-full px-3 py-2.5 rounded-xl text-xs border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none font-mono font-medium focus:border-[#B08D57] transition-colors"
                 />
               </div>
 
@@ -320,11 +381,7 @@ export const Splitter: React.FC<SplitterProps> = ({
                   type="button"
                   onClick={() => setIsJoinModalOpen(false)}
                   disabled={joinLoading}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors ${
-                    isDark
-                      ? 'border-[#2A2926] text-[#A6A29A] hover:bg-[#2A2926]'
-                      : 'border-[#E6DFC8] text-black hover:bg-[#FAF8F5]'
-                  }`}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-[var(--border)] bg-[var(--surface-secondary)] text-[var(--text-primary)] hover:border-[#B08D57] transition-colors"
                 >
                   Cancel
                 </button>
@@ -332,7 +389,7 @@ export const Splitter: React.FC<SplitterProps> = ({
                   id="confirm-join-group-btn"
                   type="submit"
                   disabled={joinLoading || !joinCodeInput.trim()}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-[#DFB15B] to-[#C59B27] hover:brightness-105 text-black disabled:opacity-50 border border-[#B38A22]/40"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#B08D57] hover:brightness-105 text-[#0B0B0B] disabled:opacity-50 transition-all shadow-xs"
                 >
                   {joinLoading ? 'Joining...' : 'Join Group'}
                 </button>
@@ -340,6 +397,20 @@ export const Splitter: React.FC<SplitterProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Delete Split Group Confirmation Modal */}
+      {groupToDelete && (
+        <DeleteGroupModal
+          isOpen={Boolean(groupToDelete)}
+          onClose={() => setGroupToDelete(null)}
+          groupId={groupToDelete.id}
+          groupName={groupToDelete.name}
+          onDeleted={() => {
+            setGroupToDelete(null);
+            onRefresh();
+          }}
+        />
       )}
     </div>
   );

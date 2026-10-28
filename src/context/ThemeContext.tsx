@@ -43,13 +43,13 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (resolvedDark) {
         root.classList.add('dark');
         root.classList.remove('light');
-        document.body.style.backgroundColor = '#0B0B0B';
-        document.body.style.color = '#FFFFFF';
+        document.body.style.backgroundColor = 'var(--background)';
+        document.body.style.color = 'var(--text-primary)';
       } else {
         root.classList.remove('dark');
         root.classList.add('light');
-        document.body.style.backgroundColor = '#FAF8F5';
-        document.body.style.color = '#000000';
+        document.body.style.backgroundColor = 'var(--background)';
+        document.body.style.color = 'var(--text-primary)';
       }
     };
 

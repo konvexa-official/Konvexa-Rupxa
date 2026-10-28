@@ -21,7 +21,10 @@ import {
   fsSetAllBudgets,
   fsAddGroupExpense,
   fsUpdateGroupExpense,
+  fsUpdateSplitGroup,
+  fsUpdateMemberAmount,
   fsDeleteGroupExpense,
+  fsDeleteSplitGroup,
   fsRecordSettlement,
 } from './firestoreDb';
 import {
@@ -344,6 +347,7 @@ export async function getMySplitGroups(userId: string): Promise<SplitGroupSummar
   const summaries: SplitGroupSummary[] = [];
 
   for (const group of allGroups) {
+    if (group.status === 'deleted' || Boolean((group as any).deleted_at)) continue;
     if (!myGroupIds.has(group.id) && group.created_by !== userId) continue;
 
     const myMembership = myMemberships.find((m) => m.split_group_id === group.id);
@@ -423,10 +427,8 @@ export async function addGroupExpense(params: {
 }): Promise<GroupExpense> {
   const now = new Date().toISOString();
   const safeTotal = parseMoney(params.amount);
-  const cleanRef = params.reference !== undefined
-    ? (params.reference?.trim() || null)
-    : (params.name?.trim() || null);
-  const cleanName = cleanRef || '';
+  const cleanRef = params.reference?.trim() ? params.reference.trim() : null;
+  const cleanName = params.name?.trim() ? params.name.trim() : (cleanRef || `${params.category} Expense`);
 
   if (isFirebaseConfigured()) {
     try {
@@ -563,14 +565,20 @@ export async function updateGroupExpense(params: {
 
   const oldExp = allExpenses[expIdx];
   const oldAmount = oldExp.amount;
-  const oldRef = (oldExp.reference !== undefined ? oldExp.reference : oldExp.name) || '';
-  const newRef = (params.reference !== undefined ? (params.reference?.trim() || '') : (params.name?.trim() || '')) || '';
-  const isReferenceChanged = oldRef !== newRef;
+  const cleanRef = params.reference !== undefined
+    ? (params.reference?.trim() ? params.reference.trim() : null)
+    : (oldExp.reference || null);
+  const oldRef = oldExp.reference || null;
+  const newRef = cleanRef;
+  const cleanName = params.name?.trim()
+    ? params.name.trim()
+    : (cleanRef || oldExp.name || `${params.category} Expense`);
+  const isReferenceChanged = (oldExp.reference || '').trim() !== (cleanRef || '').trim();
 
   const updatedExp: GroupExpense = {
     ...oldExp,
-    name: newRef,
-    reference: newRef || null,
+    name: cleanName,
+    reference: cleanRef,
     amount: safeTotal,
     category: params.category,
     paid_by_user_id: params.paidByUserId,
@@ -761,17 +769,21 @@ export async function getSplitGroupDetails(
   activity: SplitActivity[];
   expenses: GroupExpense[];
   settlements: SplitSettlement[];
+  isDeleted?: boolean;
 } | null> {
+  const cleanId = decodeURIComponent((groupId || '').trim());
+  if (!cleanId) return null;
+
   if (isFirebaseConfigured()) {
     try {
-      const fsDetails = await fsGetSplitGroupDetails(groupId, currentUserId);
+      const fsDetails = await fsGetSplitGroupDetails(cleanId, currentUserId);
       if (fsDetails) return fsDetails;
     } catch (e) {
       console.warn('Firestore getSplitGroupDetails notice:', e);
     }
   }
 
-  // Local storage mode
+  // Local storage mode & fallback
   const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
   const allMembers = readLocal<SplitMember[]>(STORAGE_KEYS.SPLIT_MEMBERS, []);
   const allActivity = readLocal<SplitActivity[]>(STORAGE_KEYS.SPLIT_ACTIVITY, []);
@@ -779,23 +791,38 @@ export async function getSplitGroupDetails(
   const allGroupExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
   const allSettlements = readLocal<SplitSettlement[]>(STORAGE_KEYS.SPLIT_SETTLEMENTS, []);
 
-  const group = allGroups.find((g) => g.id === groupId);
+  const group = allGroups.find(
+    (g) => g.id === cleanId || g.id.toLowerCase() === cleanId.toLowerCase()
+  );
   if (!group) return null;
 
+  if (group.status === 'deleted' || Boolean((group as any).deleted_at)) {
+    return {
+      group: { ...group, status: 'deleted' },
+      members: [],
+      activity: [],
+      expenses: [],
+      settlements: [],
+      isDeleted: true,
+    };
+  }
+
   const members = allMembers
-    .filter((m) => m.split_group_id === groupId)
+    .filter((m) => m.split_group_id === group.id || m.split_group_id === cleanId)
     .map((m) => ({
       ...m,
       amount: parseMoney(m.amount),
-      profile: allProfiles.find((p) => p.id === m.user_id),
+      profile: allProfiles.find((p) => p.id === m.user_id) || m.profile,
     }));
 
   const activity = allActivity
-    .filter((a) => a.split_group_id === groupId)
+    .filter((a) => a.split_group_id === group.id || a.split_group_id === cleanId)
     .map((a) => ({
       ...a,
-      actor: allProfiles.find((p) => p.id === a.actor_user_id),
-      target: a.target_user_id ? allProfiles.find((p) => p.id === a.target_user_id) : undefined,
+      actor: allProfiles.find((p) => p.id === a.actor_user_id) || a.actor,
+      target: a.target_user_id
+        ? (allProfiles.find((p) => p.id === a.target_user_id) || a.target)
+        : undefined,
     }))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -804,11 +831,11 @@ export async function getSplitGroupDetails(
     .map((e) => ({
       ...e,
       amount: parseMoney(e.amount),
-      paid_by_profile: allProfiles.find((p) => p.id === e.paid_by_user_id),
+      paid_by_profile: allProfiles.find((p) => p.id === e.paid_by_user_id) || e.paid_by_profile,
       shares: (e.shares || []).map((s) => ({
         ...s,
         amount: parseMoney(s.amount),
-        profile: allProfiles.find((p) => p.id === s.user_id),
+        profile: allProfiles.find((p) => p.id === s.user_id) || s.profile,
       })),
     }))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -818,8 +845,8 @@ export async function getSplitGroupDetails(
     .map((s) => ({
       ...s,
       amount: parseMoney(s.amount),
-      from_profile: allProfiles.find((p) => p.id === s.from_user_id),
-      to_profile: allProfiles.find((p) => p.id === s.to_user_id),
+      from_profile: allProfiles.find((p) => p.id === s.from_user_id) || s.from_profile,
+      to_profile: allProfiles.find((p) => p.id === s.to_user_id) || s.to_profile,
     }))
     .sort((a, b) => new Date(b.settled_at).getTime() - new Date(a.settled_at).getTime());
 
@@ -905,25 +932,108 @@ export async function recordSettlement(params: {
 
 export async function createSplitGroup(params: {
   name: string;
+  reference?: string | null;
   totalAmount: number;
   currency: string;
   creatorId: string;
   creatorProfile: Profile;
+  splitType?: 'equal' | 'custom';
   members: Array<{ userId: string; amount: number; profile?: Profile }>;
 }): Promise<SplitGroup> {
   const now = new Date().toISOString();
   const safeTotal = parseMoney(params.totalAmount);
+  const cleanName = params.name.trim();
+  const cleanRef = params.reference?.trim() ? params.reference.trim() : null;
+
+  const memberList = [...params.members];
+  if (!memberList.some((m) => m.userId === params.creatorId)) {
+    memberList.unshift({
+      userId: params.creatorId,
+      amount: safeTotal,
+      profile: params.creatorProfile,
+    });
+  }
+
+  // If equal split and safeTotal > 0, rebalance shares equally so each member has the exact share
+  if ((!params.splitType || params.splitType === 'equal') && safeTotal > 0 && memberList.length > 0) {
+    const perPerson = Math.floor((safeTotal / memberList.length) * 100) / 100;
+    const remainder = parseMoney(safeTotal - perPerson * memberList.length);
+    memberList.forEach((m, idx) => {
+      m.amount = idx === 0 ? parseMoney(perPerson + remainder) : perPerson;
+    });
+  }
+
+  // Ensure member profiles are cached in local profiles
+  const allProfiles = readLocal<Profile[]>(STORAGE_KEYS.PROFILES, []);
+  let profilesChanged = false;
+  memberList.forEach((m) => {
+    if (m.profile && !allProfiles.some((p) => p.id === m.userId)) {
+      allProfiles.push(m.profile);
+      profilesChanged = true;
+    }
+  });
+  if (profilesChanged) {
+    writeLocal(STORAGE_KEYS.PROFILES, allProfiles);
+  }
 
   if (isFirebaseConfigured()) {
     try {
-      return await fsCreateSplitGroup({
-        name: params.name,
+      const newGroup = await fsCreateSplitGroup({
+        name: cleanName,
+        reference: cleanRef,
         totalAmount: safeTotal,
         currency: params.currency || 'INR',
         creatorId: params.creatorId,
         creatorProfile: params.creatorProfile,
-        members: params.members,
+        splitType: params.splitType || 'equal',
+        members: memberList,
       });
+
+      // Mirror to local cache for instant viewing
+      const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
+      allGroups.unshift(newGroup);
+      writeLocal(STORAGE_KEYS.SPLIT_GROUPS, allGroups);
+
+      const allMembers = readLocal<SplitMember[]>(STORAGE_KEYS.SPLIT_MEMBERS, []);
+      memberList.forEach((m) => {
+        allMembers.push({
+          id: `mem_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          split_group_id: newGroup.id,
+          user_id: m.userId,
+          amount: parseMoney(m.amount),
+          joined_at: now,
+          updated_at: now,
+          profile: m.profile,
+        });
+      });
+      writeLocal(STORAGE_KEYS.SPLIT_MEMBERS, allMembers);
+
+      if (safeTotal > 0) {
+        const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+        allExpenses.unshift({
+          id: `gexp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          split_group_id: newGroup.id,
+          name: cleanName,
+          reference: cleanRef,
+          amount: safeTotal,
+          category: 'Other',
+          paid_by_user_id: params.creatorId,
+          paid_by_profile: params.creatorProfile,
+          split_type: params.splitType || 'equal',
+          shares: memberList.map((m) => ({
+            user_id: m.userId,
+            amount: parseMoney(m.amount),
+            profile: m.profile,
+          })),
+          created_by: params.creatorId,
+          created_at: now,
+          updated_at: now,
+        });
+        writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
+      }
+
+      emitLocalRealtime(newGroup.id, 'group_created', { group: newGroup });
+      return newGroup;
     } catch (e) {
       console.warn('Firestore createSplitGroup notice:', e);
     }
@@ -938,7 +1048,8 @@ export async function createSplitGroup(params: {
 
   const newGroup: SplitGroup = {
     id: groupId,
-    name: params.name.trim(),
+    name: cleanName,
+    reference: cleanRef,
     total_amount: safeTotal,
     currency: params.currency || 'INR',
     status: 'active',
@@ -949,15 +1060,6 @@ export async function createSplitGroup(params: {
 
   allGroups.unshift(newGroup);
   writeLocal(STORAGE_KEYS.SPLIT_GROUPS, allGroups);
-
-  const memberList = [...params.members];
-  if (!memberList.some((m) => m.userId === params.creatorId)) {
-    memberList.unshift({
-      userId: params.creatorId,
-      amount: safeTotal,
-      profile: params.creatorProfile,
-    });
-  }
 
   memberList.forEach((m) => {
     allMembers.push({
@@ -972,6 +1074,30 @@ export async function createSplitGroup(params: {
   });
   writeLocal(STORAGE_KEYS.SPLIT_MEMBERS, allMembers);
 
+  if (safeTotal > 0) {
+    const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+    allExpenses.unshift({
+      id: `gexp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      split_group_id: groupId,
+      name: cleanName,
+      reference: cleanRef,
+      amount: safeTotal,
+      category: 'Other',
+      paid_by_user_id: params.creatorId,
+      paid_by_profile: params.creatorProfile,
+      split_type: params.splitType || 'equal',
+      shares: memberList.map((m) => ({
+        user_id: m.userId,
+        amount: parseMoney(m.amount),
+        profile: m.profile,
+      })),
+      created_by: params.creatorId,
+      created_at: now,
+      updated_at: now,
+    });
+    writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
+  }
+
   const act: SplitActivity = {
     id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     split_group_id: groupId,
@@ -979,7 +1105,7 @@ export async function createSplitGroup(params: {
     action_type: 'create_group',
     old_value: null,
     new_value: safeTotal.toString(),
-    description: `${params.creatorProfile.full_name} created "${params.name.trim()}" Total ₹${safeTotal.toLocaleString('en-IN')}`,
+    description: `${params.creatorProfile.full_name} created "${cleanName}" Total ₹${safeTotal.toLocaleString('en-IN')}`,
     created_at: now,
     actor: params.creatorProfile,
   };
@@ -993,14 +1119,33 @@ export async function createSplitGroup(params: {
 export async function updateSplitGroup(params: {
   groupId: string;
   name?: string;
+  reference?: string | null;
   totalAmount?: number;
   actorId: string;
   actorProfile: Profile;
 }): Promise<SplitGroup> {
   const now = new Date().toISOString();
 
+  if (isFirebaseConfigured()) {
+    try {
+      const updated = await fsUpdateSplitGroup(params);
+      const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
+      const index = allGroups.findIndex((g) => g.id === params.groupId);
+      if (index !== -1) {
+        allGroups[index] = updated;
+        writeLocal(STORAGE_KEYS.SPLIT_GROUPS, allGroups);
+      }
+      emitLocalRealtime(params.groupId, 'group_updated', { group: updated });
+      return updated;
+    } catch (e) {
+      console.warn('Firestore updateSplitGroup notice:', e);
+    }
+  }
+
   // Local storage mode
   const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
+  const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+  const allMembers = readLocal<SplitMember[]>(STORAGE_KEYS.SPLIT_MEMBERS, []);
   const allActivity = readLocal<SplitActivity[]>(STORAGE_KEYS.SPLIT_ACTIVITY, []);
 
   const index = allGroups.findIndex((g) => g.id === params.groupId);
@@ -1009,16 +1154,50 @@ export async function updateSplitGroup(params: {
   const grp = allGroups[index];
   const oldTotal = grp.total_amount;
   const newTotal = params.totalAmount !== undefined ? parseMoney(params.totalAmount) : grp.total_amount;
+  const cleanName = params.name ? params.name.trim() : grp.name;
+  const cleanRef = params.reference !== undefined ? (params.reference?.trim() || null) : grp.reference;
 
   const updated: SplitGroup = {
     ...grp,
-    name: params.name ? params.name.trim() : grp.name,
+    name: cleanName,
+    reference: cleanRef,
     total_amount: newTotal,
     updated_at: now,
   };
 
   allGroups[index] = updated;
   writeLocal(STORAGE_KEYS.SPLIT_GROUPS, allGroups);
+
+  // If there is only 1 expense (the initial split), keep it in sync with group details
+  const activeExpenses = allExpenses.filter((e) => e.split_group_id === params.groupId && !e.deleted_at);
+  if (activeExpenses.length === 1) {
+    const singleExp = activeExpenses[0];
+    singleExp.name = cleanName;
+    if (cleanRef !== undefined) singleExp.reference = cleanRef;
+
+    if (params.totalAmount !== undefined) {
+      const groupMembers = allMembers.filter((m) => m.split_group_id === params.groupId);
+      const count = Math.max(groupMembers.length, 1);
+      const perPerson = Math.floor((newTotal / count) * 100) / 100;
+      const remainder = parseMoney(newTotal - perPerson * count);
+
+      singleExp.amount = newTotal;
+      singleExp.shares = groupMembers.map((m, idx) => ({
+        user_id: m.user_id,
+        amount: idx === 0 ? parseMoney(perPerson + remainder) : perPerson,
+        profile: m.profile,
+      }));
+
+      groupMembers.forEach((m, idx) => {
+        m.amount = idx === 0 ? parseMoney(perPerson + remainder) : perPerson;
+        m.updated_at = now;
+      });
+      writeLocal(STORAGE_KEYS.SPLIT_MEMBERS, allMembers);
+    }
+
+    singleExp.updated_at = now;
+    writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
+  }
 
   const act: SplitActivity = {
     id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -1049,6 +1228,14 @@ export async function updateMemberSplit(params: {
   const now = new Date().toISOString();
   const safeAmount = parseMoney(params.newAmount);
 
+  if (isFirebaseConfigured()) {
+    try {
+      await fsUpdateMemberAmount(params);
+    } catch (e) {
+      console.warn('Firestore updateMemberSplit notice:', e);
+    }
+  }
+
   // Local storage mode
   const allMembers = readLocal<SplitMember[]>(STORAGE_KEYS.SPLIT_MEMBERS, []);
   const allActivity = readLocal<SplitActivity[]>(STORAGE_KEYS.SPLIT_ACTIVITY, []);
@@ -1062,6 +1249,25 @@ export async function updateMemberSplit(params: {
   allMembers[memIdx].amount = safeAmount;
   allMembers[memIdx].updated_at = now;
   writeLocal(STORAGE_KEYS.SPLIT_MEMBERS, allMembers);
+
+  // If there is only 1 expense (initial split expense), keep its shares in sync
+  const allExpenses = readLocal<GroupExpense[]>(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, []);
+  const activeExpenses = allExpenses.filter((e) => e.split_group_id === params.groupId && !e.deleted_at);
+  if (activeExpenses.length === 1) {
+    const singleExp = activeExpenses[0];
+    const shIdx = (singleExp.shares || []).findIndex((s) => s.user_id === params.targetUserId);
+    if (shIdx !== -1) {
+      singleExp.shares[shIdx].amount = safeAmount;
+    } else {
+      singleExp.shares.push({
+        user_id: params.targetUserId,
+        amount: safeAmount,
+        profile: params.targetProfile || allMembers[memIdx].profile,
+      });
+    }
+    singleExp.updated_at = now;
+    writeLocal(STORAGE_KEYS.SPLIT_GROUP_EXPENSES, allExpenses);
+  }
 
   const targetName = params.targetProfile?.full_name || 'Member';
   const act: SplitActivity = {
@@ -1223,6 +1429,7 @@ export async function updateSplitGroupDetails(params: {
   actorId: string;
   actorProfile: Profile;
   name?: string;
+  reference?: string | null;
   totalAmount?: number;
 }): Promise<SplitGroup> {
   return updateSplitGroup(params);
@@ -1239,22 +1446,86 @@ export async function updateMemberAmount(params: {
   return updateMemberSplit(params);
 }
 
+export async function deleteSplitGroup(params: {
+  groupId: string;
+  actorId: string;
+  actorProfile: Profile;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  if (isFirebaseConfigured()) {
+    try {
+      await fsDeleteSplitGroup(params);
+      const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
+      const idx = allGroups.findIndex((g) => g.id === params.groupId);
+      if (idx !== -1) {
+        allGroups[idx].status = 'deleted';
+        allGroups[idx].deleted_at = now;
+        allGroups[idx].deleted_by = params.actorId;
+        allGroups[idx].updated_at = now;
+        writeLocal(STORAGE_KEYS.SPLIT_GROUPS, allGroups);
+      }
+      emitLocalRealtime(params.groupId, 'group_deleted', { groupId: params.groupId, actorId: params.actorId });
+      return;
+    } catch (e) {
+      console.warn('Firestore fsDeleteSplitGroup notice:', e);
+    }
+  }
+
+  // Local storage mode
+  const allGroups = readLocal<SplitGroup[]>(STORAGE_KEYS.SPLIT_GROUPS, []);
+  const allActivity = readLocal<SplitActivity[]>(STORAGE_KEYS.SPLIT_ACTIVITY, []);
+
+  const idx = allGroups.findIndex((g) => g.id === params.groupId);
+  if (idx === -1) throw new Error('Split group not found.');
+
+  const grp = allGroups[idx];
+  if (grp.created_by !== params.actorId) {
+    throw new Error('Permission denied: Only the group owner can delete this group.');
+  }
+
+  allGroups[idx] = {
+    ...grp,
+    status: 'deleted',
+    deleted_at: now,
+    deleted_by: params.actorId,
+    updated_at: now,
+  };
+  writeLocal(STORAGE_KEYS.SPLIT_GROUPS, allGroups);
+
+  const act: SplitActivity = {
+    id: `act_${Date.now()}_grp_deleted`,
+    split_group_id: params.groupId,
+    actor_user_id: params.actorId,
+    action_type: 'delete_group',
+    old_value: grp.name,
+    new_value: 'deleted',
+    description: `${params.actorProfile.full_name} deleted group "${grp.name}"`,
+    created_at: now,
+    actor: params.actorProfile,
+  };
+  allActivity.unshift(act);
+  writeLocal(STORAGE_KEYS.SPLIT_ACTIVITY, allActivity);
+
+  emitLocalRealtime(params.groupId, 'group_deleted', { groupId: params.groupId, actorId: params.actorId });
+}
+
 // ==========================================
 // 4. REAL-TIME SUBSCRIPTION
 // ==========================================
 
 export function subscribeToGroupUpdates(
   groupId: string,
-  onUpdate: () => void
+  onUpdate: (event?: { type: string; payload?: unknown }) => void
 ): () => void {
   if (isFirebaseConfigured()) {
-    return fsSubscribeToGroupUpdates(groupId, () => onUpdate());
+    return fsSubscribeToGroupUpdates(groupId, (ev) => onUpdate(ev));
   }
 
   // Local storage broadcast channel listener
   const handleMessage = (e: MessageEvent) => {
     if (e.data && e.data.groupId === groupId) {
-      onUpdate();
+      onUpdate({ type: e.data.type || 'UPDATE', payload: e.data });
     }
   };
 

@@ -21,6 +21,23 @@ service cloud.firestore {
       allow create: if isOwner(userId);
       allow update: if isOwner(userId);
       allow delete: if isOwner(userId);
+
+      // Private Notes: strictly private to the authenticated owner
+      match /notes/{noteId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(noteId)
+          && request.resource.data.userId == userId
+          && request.resource.data.title is string
+          && request.resource.data.type in ['text', 'checklist']
+          && request.resource.data.status in ['active', 'archived', 'trashed'];
+        allow update: if isOwner(userId)
+          && isValidId(noteId)
+          && request.resource.data.userId == userId
+          && request.resource.data.type in ['text', 'checklist']
+          && request.resource.data.status in ['active', 'archived', 'trashed'];
+        allow delete: if isOwner(userId);
+      }
     }
 
     // Personal Expenses: strictly private to the authenticated owner
@@ -60,6 +77,11 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create: if isSignedIn();
         allow update, delete: if false;
+      }
+
+      match /settlements/{settlementId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
       }
     }
 

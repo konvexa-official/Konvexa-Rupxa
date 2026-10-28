@@ -54,10 +54,13 @@ export interface Expense {
 export interface SplitGroup {
   id: string;
   name: string;
+  reference?: string | null;
   created_by: string;
   total_amount: number;
   currency: string;
-  status: 'active' | 'archived';
+  status: 'active' | 'archived' | 'deleted';
+  deleted_at?: string | null;
+  deleted_by?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -79,6 +82,7 @@ export type SplitActionType =
   | 'remove_member'
   | 'amount_change'
   | 'update_group'
+  | 'delete_group'
   | 'leave_group'
   | 'add_expense'
   | 'edit_expense'
@@ -151,7 +155,7 @@ export interface SplitActivity {
   deletion_note?: string | null;
 }
 
-export type ActiveTab = 'dashboard' | 'expenses' | 'splitter' | 'settings';
+export type ActiveTab = 'dashboard' | 'expenses' | 'splitter' | 'notes' | 'settings';
 
 export interface SplitGroupSummary extends SplitGroup {
   member_count: number;
@@ -209,7 +213,95 @@ export interface ConnectedCard {
   created_at: string;
 }
 
+export type TransactionType = 'Expense' | 'Income' | 'Refund' | 'Transfer';
+
+export type DetectionStatus = 'recorded' | 'review_needed' | 'duplicate' | 'ignored';
+
+export interface ParsedTransaction {
+  amount: number;
+  type: TransactionType;
+  date: string; // YYYY-MM-DD
+  time?: string; // HH:MM
+  merchant: string;
+  payment_method: PaymentMethod;
+  account_last4?: string;
+  reference_id?: string;
+  source_type: string; // e.g. "HDFC Bank SMS", "UPI (Google Pay)", "Card Alert"
+  category: ExpenseCategory;
+  confidence: 'high' | 'medium' | 'low';
+  fingerprint: string;
+  is_financial: boolean;
+  ignore_reason?: string;
+}
+
+export interface DetectionHistoryItem {
+  id: string;
+  user_id: string;
+  timestamp: string; // ISO
+  raw_snippet: string; // Sanitized preview
+  parsed?: ParsedTransaction;
+  status: DetectionStatus;
+  status_reason?: string;
+  expense_id?: string; // Reference to created Expense.id
+  updated_at?: string;
+}
+
 export interface ExpenseSourceSettings {
   message_detection_enabled: boolean;
+  auto_record: boolean;
   cards_enabled: boolean;
+  last_import_at?: string;
+  total_detected_count?: number;
+  duplicate_prevention_enabled: boolean;
 }
+
+// ==========================================
+// NOTES FEATURE TYPES
+// ==========================================
+
+export type NoteType = 'text' | 'checklist';
+export type NoteStatus = 'active' | 'archived' | 'trashed';
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+  position: number;
+}
+
+export interface Note {
+  id: string;
+  userId: string;
+  title: string;
+  content: string;
+  type: NoteType;
+  checklistItems: ChecklistItem[];
+  isPinned: boolean;
+  isFavorite: boolean;
+  isFinanceNote: boolean;
+  status: NoteStatus;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  schemaVersion: number;
+  version: number;
+}
+
+export type NoteNavFilter =
+  | 'all'
+  | 'pinned'
+  | 'favorites'
+  | 'checklists'
+  | 'finance'
+  | 'archived'
+  | 'trash';
+
+export type NoteSortOption = 'updated_desc' | 'created_desc' | 'title_asc';
+
+export interface ConflictedNoteState {
+  noteId: string;
+  localNote: Note;
+  serverNote: Note;
+  baseVersion: number;
+}
+
